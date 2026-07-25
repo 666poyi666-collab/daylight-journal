@@ -1,0 +1,18 @@
+{
+  "name": "拾光 · 日记复盘",
+  "short_name": "拾光",
+  "description": "一个安静、好用的个人日记与 AI 复盘应用。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f4ef",
+  "theme_color": "#526f5c",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/icon-journal-sunrise.png",
+      "sizes": "1254x1254",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
