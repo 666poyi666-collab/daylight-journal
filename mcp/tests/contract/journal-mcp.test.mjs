@@ -87,17 +87,32 @@ test('Journal MCP exposes namespaced tools, Resources, writes, and content-safe 
     assert.equal(metadata.result.structuredContent.data.entry.resourceUri, 'journal://entries/2026-07-26')
     assert.equal(metadata.result.structuredContent.data.resourceIncluded, true)
     assert.equal(metadata.result.structuredContent.data.contentLength, marker.length)
+    assert.equal(metadata.result.structuredContent.data.contentChunk, marker)
+    assert.equal(metadata.result.structuredContent.data.contentComplete, true)
+    assert.equal(metadata.result.structuredContent.data.nextOffset, null)
     assert.deepEqual(metadata.result.content[1], {
-      type: 'resource',
-      resource: {
-        uri: 'journal://entries/2026-07-26',
-        mimeType: 'application/json',
-        text: metadata.result.content[1].resource.text,
-      },
+      type: 'resource_link',
+      uri: 'journal://entries/2026-07-26',
+      name: 'journal-entry',
+      description: '权威完整日记 Resource；ChatGPT 正文读取使用当前工具的分页字段。',
+      mimeType: 'application/json',
     })
-    assert.doesNotMatch(metadata.result.content[0].text, new RegExp(marker))
-    assert.doesNotMatch(JSON.stringify(metadata.result.structuredContent), new RegExp(marker))
-    assert.match(metadata.result.content[1].resource.text, new RegExp(marker))
+    assert.match(metadata.result.content[0].text, new RegExp(marker))
+
+    const firstChunk = await rpc(baseUrl, 7, 'tools/call', {
+      name: 'journal_get_entry', arguments: { date: '2026-07-26', offset: 0, maxChars: 8 },
+    })
+    assert.equal(firstChunk.result.structuredContent.data.contentChunk, marker.slice(0, 8))
+    assert.equal(firstChunk.result.structuredContent.data.contentComplete, false)
+    assert.equal(firstChunk.result.structuredContent.data.nextOffset, 8)
+    assert.doesNotMatch(firstChunk.result.content[0].text, new RegExp(marker))
+
+    const finalChunk = await rpc(baseUrl, 8, 'tools/call', {
+      name: 'journal_get_entry', arguments: { date: '2026-07-26', offset: 8, maxChars: 12_000 },
+    })
+    assert.equal(finalChunk.result.structuredContent.data.contentChunk, marker.slice(8))
+    assert.equal(finalChunk.result.structuredContent.data.contentComplete, true)
+    assert.equal(finalChunk.result.structuredContent.data.nextOffset, null)
 
     const resource = await rpc(baseUrl, 6, 'resources/read', { uri: 'journal://entries/2026-07-26' })
     assert.match(resource.result.contents[0].text, new RegExp(marker))

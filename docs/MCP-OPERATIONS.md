@@ -75,10 +75,11 @@ MCP 工具：
 - `journal_append_entry`
 - `journal_update_entry`
 
-Resource：`journal://entries/{date}`。`journal_get_entry` 的普通文本与 `structuredContent`
-只返回元数据、`resourceIncluded` 和正文长度，完整正文放在标准 MCP Resource 内容块中；
-服务同时保留 `resources/read` 模板契约。所有写工具要求 UUID `requestId` 和
-`expectedRevision`。Journal 没有控制命令，capabilities 中 `controlCommands` 是空数组。
+Resource：`journal://entries/{date}`。`journal_get_entry` 按 `offset`/`maxChars` 在普通文本与
+`structuredContent` 中分页返回正文（`contentChunk`/`contentComplete`/`nextOffset`），
+并以 `resource_link` 指向权威 Resource；服务同时保留 `resources/read` 模板契约。
+所有写工具要求 UUID `requestId` 和 `expectedRevision`。Journal 没有控制命令，
+capabilities 中 `controlCommands` 是空数组。
 
 ## 安装和升级
 
@@ -129,7 +130,8 @@ Node 24 上若 Inspector 在打印成功响应后因已知上游退出断言返�
 
 1. Tunnel doctor/ready 均通过后，在 ChatGPT 创建独立“拾光日记”应用并绑定 Journal Tunnel。
 2. 调用 `journal_get_status` 和 `journal_list_recent`，确认只访问 Journal。
-3. 调用 `journal_get_entry` 后读取其 `journal://entries/{date}`，确认 Resource 可读。
+3. 调用 `journal_get_entry` 读取正文分块；若 `contentComplete` 为 false，用 `nextOffset`
+   续读直到完成，确认 ChatGPT 能取得完整正文而非仅摘要。
 4. 用新 requestId 和当前 revision 做一次显式元数据更新；优先把值更新为原值，避免改变正文。
 5. 原样重复同一 requestId，结果必须 `replayed: true` 且 revision 不再次增加。
 6. 重启 `PoyiJournalMcp` 后再重复 requestId，仍必须重放。

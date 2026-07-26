@@ -21,26 +21,44 @@ function toolResult(data, requestId) {
   }
 }
 
-function entryResourceResult(value, requestId) {
-  const contentLength = typeof value.entry.content === 'string'
-    ? value.entry.content.length
-    : value.entry.blocks?.reduce((total, block) => total + (block.content?.length ?? 0), 0) ?? 0
+function withContentAccess(value) {
+  return {
+    ...value,
+    contentAccess: {
+      tool: 'journal_get_entry',
+      instruction: '对每篇结果调用 journal_get_entry；不要把列表摘要当作完整正文。',
+    },
+  }
+}
+
+function entryResourceResult(result, requestId) {
+  const { value, offset, maxChars } = result
+  const body = typeof value.entry.content === 'string'
+    ? value.entry.content
+    : value.entry.blocks?.map((block) => block.content ?? '').join('\n\n---\n\n') ?? ''
+  const contentOffset = Math.min(offset, body.length)
+  const contentChunk = body.slice(contentOffset, contentOffset + maxChars)
+  const consumed = contentOffset + contentChunk.length
+  const nextOffset = consumed < body.length ? consumed : null
   const data = {
     ...metadataOnly(value),
     resourceIncluded: true,
-    contentLength,
+    contentLength: body.length,
+    contentOffset,
+    contentChunk,
+    contentComplete: nextOffset === null,
+    nextOffset,
   }
   const payload = { ok: true, requestId, data }
   return {
     content: [
       { type: 'text', text: JSON.stringify(payload) },
       {
-        type: 'resource',
-        resource: {
-          uri: data.entry.resourceUri,
-          mimeType: 'application/json',
-          text: JSON.stringify(value),
-        },
+        type: 'resource_link',
+        uri: data.entry.resourceUri,
+        name: 'journal-entry',
+        description: '权威完整日记 Resource；ChatGPT 正文读取使用当前工具的分页字段。',
+        mimeType: 'application/json',
       },
     ],
     structuredContent: payload,
@@ -133,14 +151,14 @@ export function registerJournalTools(server, store, audit, health) {
 
   register('journal_list_recent', {
     title: '列出最近日记',
-    description: '分页列出最近日记的日期、标题、短摘要和 Resource URI。',
+    description: '分页列出最近日记摘要。用户要查看或复盘时，必须继续对每篇调用 journal_get_entry 读取正文。',
     inputSchema: { limit: schema.limit, cursor: schema.cursor },
     annotations: readOnly,
-  }, async ({ limit = 20, cursor = '' }) => await store.listEntries({ limit, cursor }))
+  }, async ({ limit = 20, cursor = '' }) => withContentAccess(await store.listEntries({ limit, cursor })))
 
   register('journal_search', {
     title: '搜索日记',
-    description: '按关键词和日期范围搜索日记摘要；完整正文需读取返回的 Resource URI。',
+    description: '按关键词和日期范围搜索摘要。命中后必须调用 journal_get_entry 分块读取正文，不能只依据摘要回答。',
     inputSchema: {
       query: schema.text.min(1),
       from: schema.date.optional(),
@@ -149,16 +167,24 @@ export function registerJournalTools(server, store, audit, health) {
       cursor: schema.cursor,
     },
     annotations: readOnly,
-  }, async ({ query, from, to, limit = 20, cursor = '' }) => (
-    await store.listEntries({ query, from, to, limit, cursor })
+  }, async ({ query, from, to, limit = 20, cursor = '' }) => withContentAccess(
+    await store.listEntries({ query, from, to, limit, cursor }),
   ))
 
   register('journal_get_entry', {
-    title: '读取日记元数据',
-    description: '读取指定日期的元数据，并以 MCP Resource 内容块提供完整正文。',
-    inputSchema: { date: schema.date },
+    title: '读取日记正文',
+    description: '读取指定日期的正文分块。默认返回最多 6000 字符；若 contentComplete 为 false，必须用 nextOffset 继续读取，直到完成。',
+    inputSchema: {
+      date: schema.date,
+      offset: schema.contentOffset,
+      maxChars: schema.contentLimit,
+    },
     annotations: readOnly,
-  }, async ({ date }) => await store.getEntry(date), entryResourceResult, 'journal-entry')
+  }, async ({ date, offset = 0, maxChars = 6_000 }) => ({
+    value: await store.getEntry(date),
+    offset,
+    maxChars,
+  }), entryResourceResult, 'journal-entry')
 
   register('journal_create_entry', {
     title: '创建日记',

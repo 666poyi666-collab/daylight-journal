@@ -91,7 +91,9 @@ type JournalBlock = {
 - 同一业务进程在 Private/LocalSubnet 的 8781 提供带 Bearer 的 LAN API，并通过 mDNS
   发布稳定 serviceId；LAN listener 不注册 `/mcp`。
 - `/v1/*` 使用仓库外随机 Bearer token；`/mcp` 只允许通过回环地址或独立 Secure MCP Tunnel 到达。
-- 普通工具只返回状态、元数据、短摘要和 Resource URI；完整正文使用 `journal://entries/{date}`。
+- 列表/搜索工具只返回状态、元数据、短摘要和 Resource URI；`journal_get_entry` 按
+  `offset`/`maxChars` 分页返回正文并以 `resource_link` 指向 `journal://entries/{date}`，
+  Resource 仍提供权威全文。
 - 写操作由 `JournalStore` 执行，MCP 层只做 schema、错误映射和脱敏审计。
 - Journal 没有后台控制命令，因此 `commandId`、`expectedState`、`expiresAt` 不适用，capabilities 明确返回空 `controlCommands`。
 

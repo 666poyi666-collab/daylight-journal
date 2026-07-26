@@ -16,7 +16,12 @@ import { getSettings } from './settings.mjs'
 import { registerJournalTools } from './tools.mjs'
 
 export function createMcpServer(store, audit, health, version) {
-  const server = new McpServer({ name: 'Journal MCP', version })
+  const server = new McpServer(
+    { name: 'Journal MCP', version },
+    {
+      instructions: '查看或复盘日记时，先用 journal_list_recent 或 journal_search 定位记录，再对每篇调用 journal_get_entry 读取正文。若 contentComplete 为 false，必须用 nextOffset 继续调用，直到正文读取完成；不要只依据列表摘要分析。',
+    },
+  )
   registerJournalTools(server, store, audit, health)
   registerJournalResources(server, store, audit, health)
   return server

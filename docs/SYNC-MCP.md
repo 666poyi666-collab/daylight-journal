@@ -44,9 +44,15 @@ MCP endpoint 为 `http://127.0.0.1:8780/mcp`，使用 Streamable HTTP。工具�
 - `journal_append_entry`
 - `journal_update_entry`
 
-完整正文 Resource：`journal://entries/{date}`。
+完整正文 Resource：`journal://entries/{date}`（`resources/read` 仍返回权威全文）。
 
-列表、搜索和读取工具返回元数据、短摘要与 Resource URI；完整/长正文由 Resource 返回。
+`journal_list_recent` / `journal_search` 只返回元数据、短摘要与 Resource URI，并附带
+`contentAccess` 引导：命中后必须逐篇调用 `journal_get_entry` 读取正文。
+`journal_get_entry` 直接分页返回正文：入参 `offset`（默认 0）与 `maxChars`（默认
+6000、上限 12000 字符），返回 `contentChunk`、`contentLength`、`contentOffset`、
+`contentComplete` 与 `nextOffset`；`contentComplete` 为 false 时必须用 `nextOffset`
+继续读取，结果同时附带指向权威 Resource 的 `resource_link`。服务端 instructions
+向客户端声明该流程。原因：ChatGPT 不会自动读取嵌入式 Resource 内容块。
 写工具必须显式提供 requestId 和 expectedRevision。审计日志只允许时间、事件、请求 ID、
 工具/Resource 名、耗时、结果和错误码，禁止正文、标题、标签、图片和任何令牌。
 
