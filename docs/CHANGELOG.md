@@ -77,6 +77,9 @@
 - MCP 升级脚本的数据 ACL 遍历踩到运行中 Tunnel 锁定的日志文件即中断、服务装而未启
   （假活）：icacls 改为按退出码判定且不再被 stderr 终止，遍历排除 Tunnel 日志与
   DPAPI 密钥，并取消对 Tunnel 密钥的 MCP ACE。
+- WinNAT 动态排除端口段漂移吞掉 8780/8781，特权 bind 静默黑洞、服务长期假活：
+  安装脚本以管理员保留段固定 Journal 端口（MCP 8780/8781、Tunnel 8887），
+  verify 前置检测动态排除命中；新增 `JOURNAL_TRACE` 启动阶段打点常开进服务日志。
 
 ### Verified
 

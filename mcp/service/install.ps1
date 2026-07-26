@@ -35,13 +35,40 @@ function Wait-Ready([int]$TimeoutSeconds = 45) {
     throw 'PoyiJournalMcp did not become ready.'
 }
 
-function Invoke-Icacls([string[]]$ArgumentList) {
-    # icacls reports per-object failures on stderr; under the Stop preference a
-    # redirected stderr line becomes terminating and aborts the install midway,
-    # so run with Continue and let callers judge the exit code instead.
+function Invoke-Quiet([string]$FilePath, [string[]]$ArgumentList) {
+    # Native stderr noise must not become terminating under the Stop
+    # preference; run with Continue and let callers judge the exit code.
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    try { & icacls @ArgumentList 2>&1 | Out-Null } finally { $ErrorActionPreference = $previous }
+    try { & $FilePath @ArgumentList 2>&1 | Out-Null } finally { $ErrorActionPreference = $previous }
+}
+
+function Invoke-Icacls([string[]]$ArgumentList) {
+    Invoke-Quiet 'icacls' $ArgumentList
+}
+
+function Reserve-JournalPorts([int]$StartPort, [int]$Count) {
+    # WinNAT re-picks its dynamic excluded port ranges after network-stack
+    # events; when one lands on the Journal ports a privileged bind "succeeds"
+    # with no reachable listener (BUG-019). An administered exclusion pins the
+    # ports so dynamic ranges avoid them permanently.
+    $endPort = $StartPort + $Count - 1
+    $administered = $false
+    $dynamicHit = $false
+    foreach ($line in & netsh int ipv4 show excludedportrange protocol=tcp) {
+        if ($line -match '^\s*(\d+)\s+(\d+)(\s*\*)?\s*$') {
+            $rangeStart = [int]$Matches[1]
+            $rangeEnd = [int]$Matches[2]
+            if ($rangeStart -le $StartPort -and $rangeEnd -ge $endPort -and $Matches[3]) { $administered = $true }
+            elseif ($rangeStart -le $endPort -and $rangeEnd -ge $StartPort -and -not $Matches[3]) { $dynamicHit = $true }
+        }
+    }
+    if ($administered) { return }
+    if ($dynamicHit) { Invoke-Quiet 'net' @('stop', 'winnat') }
+    Invoke-Quiet 'netsh' @('int', 'ipv4', 'add', 'excludedportrange', 'protocol=tcp', "startport=$StartPort", "numberofports=$Count", 'store=persistent')
+    $added = $LASTEXITCODE
+    if ($dynamicHit) { Invoke-Quiet 'net' @('start', 'winnat') }
+    if ($added -ne 0) { throw "Failed to reserve Journal ports $StartPort-$endPort against dynamic exclusions." }
 }
 
 function Wait-TunnelReady([int]$TimeoutSeconds = 45) {
@@ -175,6 +202,8 @@ if ($null -eq $firewallRule) {
     $firewallRule | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter `
         -RemoteAddress LocalSubnet | Out-Null
 }
+
+Reserve-JournalPorts -StartPort 8780 -Count 2
 
 & $serviceExe start
 if ($LASTEXITCODE -ne 0) { throw 'PoyiJournalMcp service failed to start.' }

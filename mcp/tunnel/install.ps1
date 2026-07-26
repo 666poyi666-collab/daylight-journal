@@ -29,6 +29,38 @@ function Get-VerifiedDownload([string]$Url, [string]$Sha256, [string]$Destinatio
     }
 }
 
+function Invoke-Quiet([string]$FilePath, [string[]]$ArgumentList) {
+    # Native stderr noise must not become terminating under the Stop
+    # preference; run with Continue and let callers judge the exit code.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $FilePath @ArgumentList 2>&1 | Out-Null } finally { $ErrorActionPreference = $previous }
+}
+
+function Reserve-JournalPorts([int]$StartPort, [int]$Count) {
+    # WinNAT re-picks its dynamic excluded port ranges after network-stack
+    # events; when one lands on the Tunnel health port a privileged bind
+    # "succeeds" with no reachable listener (BUG-019). An administered
+    # exclusion pins the port so dynamic ranges avoid it permanently.
+    $endPort = $StartPort + $Count - 1
+    $administered = $false
+    $dynamicHit = $false
+    foreach ($line in & netsh int ipv4 show excludedportrange protocol=tcp) {
+        if ($line -match '^\s*(\d+)\s+(\d+)(\s*\*)?\s*$') {
+            $rangeStart = [int]$Matches[1]
+            $rangeEnd = [int]$Matches[2]
+            if ($rangeStart -le $StartPort -and $rangeEnd -ge $endPort -and $Matches[3]) { $administered = $true }
+            elseif ($rangeStart -le $endPort -and $rangeEnd -ge $StartPort -and -not $Matches[3]) { $dynamicHit = $true }
+        }
+    }
+    if ($administered) { return }
+    if ($dynamicHit) { Invoke-Quiet 'net' @('stop', 'winnat') }
+    Invoke-Quiet 'netsh' @('int', 'ipv4', 'add', 'excludedportrange', 'protocol=tcp', "startport=$StartPort", "numberofports=$Count", 'store=persistent')
+    $added = $LASTEXITCODE
+    if ($dynamicHit) { Invoke-Quiet 'net' @('start', 'winnat') }
+    if ($added -ne 0) { throw "Failed to reserve Journal Tunnel port $StartPort against dynamic exclusions." }
+}
+
 function Protect-Secret([Security.SecureString]$Secret, [string]$Destination) {
     $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secret)
     try {
@@ -118,6 +150,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal Tunnel runtime ACL
 & icacls (Join-Path $resolvedData 'tunnel-runtime-key.dpapi') /inheritance:r `
     /grant:r 'BUILTIN\Administrators:F' "$serviceSid`:R" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Failed to protect the Journal Tunnel runtime key.' }
+
+Reserve-JournalPorts -StartPort 8887 -Count 1
 
 & $serviceExe start
 if ($LASTEXITCODE -ne 0) { throw 'PoyiJournalTunnel service failed to start.' }
