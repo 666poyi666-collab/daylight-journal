@@ -35,6 +35,17 @@ function Wait-Ready([int]$TimeoutSeconds = 45) {
     throw 'PoyiJournalMcp did not become ready.'
 }
 
+function Wait-TunnelReady([int]$TimeoutSeconds = 45) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        try { $ready = Invoke-RestMethod 'http://127.0.0.1:8887/readyz' -TimeoutSec 2 }
+        catch { $ready = $null }
+        if ($ready -eq 'ready') { return }
+        Start-Sleep -Milliseconds 500
+    } until ((Get-Date) -ge $deadline)
+    throw 'PoyiJournalTunnel did not become ready after the MCP upgrade.'
+}
+
 Assert-Administrator
 $sourceRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $resolvedSource = (Resolve-Path -LiteralPath $sourceRoot).Path
@@ -47,6 +58,8 @@ if (-not $resolvedData.StartsWith([IO.Path]::GetFullPath($env:ProgramData), [Str
     throw 'DataDir must be under ProgramData.'
 }
 
+$tunnel = Get-Service -Name 'PoyiJournalTunnel' -ErrorAction SilentlyContinue
+$tunnelWasRunning = $null -ne $tunnel -and $tunnel.Status -eq 'Running'
 $existing = Get-Service -Name 'PoyiJournalMcp' -ErrorAction SilentlyContinue
 if ($null -ne $existing) {
     if ($existing.Status -ne 'Stopped') {
@@ -147,4 +160,8 @@ if ($null -eq $firewallRule) {
 & $serviceExe start
 if ($LASTEXITCODE -ne 0) { throw 'PoyiJournalMcp service failed to start.' }
 Wait-Ready
+if ($tunnelWasRunning) {
+    Start-Service -Name 'PoyiJournalTunnel'
+    Wait-TunnelReady
+}
 Write-Host "Installed PoyiJournalMcp in $resolvedInstall" -ForegroundColor Green

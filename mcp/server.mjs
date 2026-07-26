@@ -28,6 +28,29 @@ function configureHttpApp(app) {
   app.use(cors({ origin: true, exposedHeaders: ['Mcp-Session-Id'] }))
 }
 
+function registerOAuthDiscoveryRoutes(app) {
+  app.get('/.well-known/oauth-protected-resource/mcp', (req, res) => {
+    const origin = `${req.protocol}://${req.get('host')}`
+    res.json({
+      resource: `${origin}/mcp`,
+      authorization_servers: [origin],
+    })
+  })
+  app.get('/.well-known/oauth-authorization-server', (req, res) => {
+    const origin = `${req.protocol}://${req.get('host')}`
+    res.json({
+      issuer: origin,
+      authorization_endpoint: `${origin}/oauth/authorize`,
+      token_endpoint: `${origin}/oauth/token`,
+      registration_endpoint: `${origin}/oauth/register`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      token_endpoint_auth_methods_supported: ['none'],
+      code_challenge_methods_supported: ['S256'],
+    })
+  })
+}
+
 function registerBusinessRoutes(app, store, apiToken) {
   app.use('/v1', createJournalApiRouter(store, apiToken))
   app.use('/journal', createBearerAuth(apiToken))
@@ -69,6 +92,7 @@ export async function createJournalApp(settings = getSettings()) {
     res.type('text/plain; version=0.0.4').send(health.metrics())
   })
   app.get('/health', (_req, res) => res.json({ ok: true, service: 'Journal MCP' }))
+  registerOAuthDiscoveryRoutes(app)
   registerBusinessRoutes(app, store, apiToken)
 
   app.post('/mcp', async (req, res) => {

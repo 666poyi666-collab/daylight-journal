@@ -78,7 +78,7 @@ $client = Get-ChildItem -LiteralPath (Join-Path $resolvedInstall 'tunnel-client'
     -Filter 'tunnel-client.exe' -Recurse | Select-Object -First 1
 & $client.FullName init --profile journal --profile-dir $profileDir --force `
     --tunnel-id $TunnelId --mcp-server-url 'http://127.0.0.1:8780/mcp' `
-    --health-listen-addr '127.0.0.1:8987' `
+    --health-listen-addr '127.0.0.1:8887' `
     --control-plane-api-key-ref 'env:CONTROL_PLANE_API_KEY'
 if ($LASTEXITCODE -ne 0) { throw 'Journal Tunnel profile creation failed.' }
 Protect-Secret $RuntimeApiKey (Join-Path $resolvedData 'tunnel-runtime-key.dpapi')

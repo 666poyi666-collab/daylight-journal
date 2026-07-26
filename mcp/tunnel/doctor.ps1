@@ -13,7 +13,8 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect($encrypted, $entropy, 
 try {
     $env:CONTROL_PLANE_API_KEY = [Text.Encoding]::UTF8.GetString($plain)
     $client = Get-ChildItem -LiteralPath (Join-Path $InstallDir 'tunnel-client') -Filter 'tunnel-client.exe' -Recurse | Select-Object -First 1
-    $result = & $client.FullName doctor --profile journal --profile-dir (Join-Path $DataDir 'tunnel-profile') --explain --json 2>&1
+    $result = & $client.FullName doctor --profile journal --profile-dir (Join-Path $DataDir 'tunnel-profile') `
+        --health.listen-addr '127.0.0.1:0' --explain --json 2>&1
     $code = $LASTEXITCODE
     $result | ForEach-Object {
         $_ -replace 'sk-[A-Za-z0-9_-]+', 'sk-[REDACTED]' `

@@ -28,6 +28,11 @@
 | BUG-009 | 2026-07 | ACL 继承标志未给已有 journals.json 形成可读 ACE | 现有对象直接授权、根目录另设继承；服务 readyz 与崩溃恢复通过 |
 | BUG-010 | 2026-07 | 强制结束 WinSW 包装器会遗留 Node 子进程并形成 split listener | 服务入口改为绝对路径，安装前清理 Journal 孤儿；按正确方式终止 Node 后单进程双端口恢复通过 |
 | BUG-011 | 2026-07 | 兼容 `/journal/*` 匿名且任意 CORS 来源可访问回环数据 | 兼容接口统一 Bearer；客户端增加本地配对设置，匿名/API/LAN 契约覆盖 |
+| BUG-012 | 2026-07 | Tunnel 健康端口 8987 落入 Windows 保留端口段，服务启动后立即退出 | operator 迁移到独立端口 8887；补齐 HTTP MCP OAuth 发现契约并以 Tunnel doctor/ready 回归 |
+| BUG-013 | 2026-07 | 服务运行时 doctor 重复绑定固定健康端口，误报端口占用 | doctor 改用 loopback 临时端口，正式 operator 仍固定监听 8887 |
+| BUG-014 | 2026-07 | ChatGPT 不会把普通 JSON URI 自动读取为 MCP Resource | `journal_get_entry` 改为标准 Resource 内容块，结构化结果只附带 `resourceIncluded` 与长度；真实 ChatGPT 调用通过且正文未输出 |
+| BUG-015 | 2026-07 | 升级 MCP 时依赖服务 Tunnel 被 Windows 停止后没有恢复 | 安装脚本记忆升级前状态，在 MCP ready 后恢复并等待 Tunnel ready；实际升级回归通过 |
+| BUG-016 | 2026-07 | 服务验证发现敏感日志时仍可能以退出码 0 结束 | 匿名认证、LAN 隔离、单监听进程和敏感值扫描均改为硬断言；管理员上下文验证退出码 0 |
 
 ## 新 Bug 模板
 

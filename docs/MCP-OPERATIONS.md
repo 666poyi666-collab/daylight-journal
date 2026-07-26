@@ -30,15 +30,19 @@ runtime key、profile、端口、数据库或日志。Journal 服务停止只能
 | MCP endpoint | `http://127.0.0.1:8780/mcp` |
 | LAN 业务 API | `0.0.0.0:8781`，仅 Private/LocalSubnet |
 | mDNS 类型 | `_poyi-journal._tcp.local` |
-| Tunnel operator | `127.0.0.1:8987` |
+| Tunnel operator | `127.0.0.1:8887` |
 | Tunnel profile | `journal` |
 | Tunnel 名称 | `journal-tunnel` |
 | 运行数据 | `%ProgramData%\Poyi\JournalMcp` |
 | 安装目录 | `%ProgramFiles%\Poyi\JournalMcp` |
 
 MCP 服务提供 `GET /healthz`、`GET /readyz`、`GET /metrics`。8781 只提供健康、版本化
-业务 API 和兼容同步接口，任何 `/mcp` 请求必须为 404。Tunnel 自身也在 8987
+业务 API 和兼容同步接口，任何 `/mcp` 请求必须为 404。Tunnel 自身也在 8887
 提供健康和就绪状态。两个 WinSW 服务均为 Automatic (Delayed)、三级失败重启。
+
+本机 Windows 保留了 `8901-9000` TCP 端口范围，因此不得将 Tunnel operator 配置到
+该范围；`8887` 是 Journal 的固定、独立且经实际绑定验证的健康端口。doctor 使用
+`127.0.0.1:0` 临时端口执行并行诊断，避免与正在运行的 operator 争用 `8887`。
 
 ## 认证与权限
 
@@ -71,9 +75,10 @@ MCP 工具：
 - `journal_append_entry`
 - `journal_update_entry`
 
-Resource：`journal://entries/{date}`。完整/长正文只通过 Resource；普通工具返回状态、
-元数据、短摘要和 URI。所有写工具要求 UUID `requestId` 和 `expectedRevision`。Journal
-没有控制命令，capabilities 中 `controlCommands` 是空数组。
+Resource：`journal://entries/{date}`。`journal_get_entry` 的普通文本与 `structuredContent`
+只返回元数据、`resourceIncluded` 和正文长度，完整正文放在标准 MCP Resource 内容块中；
+服务同时保留 `resources/read` 模板契约。所有写工具要求 UUID `requestId` 和
+`expectedRevision`。Journal 没有控制命令，capabilities 中 `controlCommands` 是空数组。
 
 ## 安装和升级
 
@@ -150,7 +155,19 @@ Node 24 上若 Inspector 在打印成功响应后因已知上游退出断言返�
   entry point 对应的孤儿进程。
 - 8781 实际绑定 `0.0.0.0`，防火墙仅 Private/LocalSubnet；匿名 API 为 401、`/mcp`
   为 404。mDNS 实测发现端口 8781、稳定 serviceId 和 API v1。
-- 单元/集成/契约测试 16 项通过，lint 与生产构建通过。
+- 单元/集成/契约测试 17 项通过，lint、生产构建和部署态 E2E 通过。
 - Inspector 成功返回 7 个工具和 Resource 模板，但 Windows Node 24 在响应后触发已登记的
  退出断言，见 `BUGS.md` KR-006。
-- Tunnel、ChatGPT 真实读写、CI、APK 和提交 SHA 在完成后追加到发布记录，不在此处记录秘密。
+- Secure MCP Tunnel doctor 要求 HTTP MCP 提供 Protected Resource Metadata；Journal MCP
+  已提供对应的 `/.well-known` 发现契约，元数据响应不包含日记或凭据。
+- `journal-tunnel`、`PoyiJournalTunnel` 和独立“拾光日记”ChatGPT 应用已连接并 ready；
+  未创建或修改 PersonalMcpGateway Adapter。
+- ChatGPT 真实调用 `journal_get_status`、`journal_list_recent`、`journal_get_entry` 和
+  `journal_update_entry` 通过。Resource 结果为 `resourceIncluded: true`，证据仅记录长度，
+  不记录正文或元数据。
+- 首次元数据原值写回返回 `replayed: false`、revision 2；相同 requestId 和参数重放返回
+  `replayed: true`、revision 2；重启 MCP 后再次重放仍为 `true`、revision 2。
+- MCP 升级后会自动恢复原本运行的 Tunnel；服务重启验收中 Foxlink 状态未变化，Watch
+  保持重启前的停止状态。Tunnel doctor、verify 和带敏感值硬断言的服务验证均通过。
+- 真实验收未输出或保存日期、标题、心情、标签、图片、正文、URI、requestId、Tunnel ID、
+  runtime key、Cookie 或会话数据。CI、APK 和提交 SHA 由对应 GitHub 发布记录与最终报告给出。

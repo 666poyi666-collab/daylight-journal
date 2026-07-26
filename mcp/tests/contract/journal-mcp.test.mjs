@@ -85,7 +85,19 @@ test('Journal MCP exposes namespaced tools, Resources, writes, and content-safe 
       name: 'journal_get_entry', arguments: { date: '2026-07-26' },
     })
     assert.equal(metadata.result.structuredContent.data.entry.resourceUri, 'journal://entries/2026-07-26')
-    assert.doesNotMatch(JSON.stringify(metadata), new RegExp(marker))
+    assert.equal(metadata.result.structuredContent.data.resourceIncluded, true)
+    assert.equal(metadata.result.structuredContent.data.contentLength, marker.length)
+    assert.deepEqual(metadata.result.content[1], {
+      type: 'resource',
+      resource: {
+        uri: 'journal://entries/2026-07-26',
+        mimeType: 'application/json',
+        text: metadata.result.content[1].resource.text,
+      },
+    })
+    assert.doesNotMatch(metadata.result.content[0].text, new RegExp(marker))
+    assert.doesNotMatch(JSON.stringify(metadata.result.structuredContent), new RegExp(marker))
+    assert.match(metadata.result.content[1].resource.text, new RegExp(marker))
 
     const resource = await rpc(baseUrl, 6, 'resources/read', { uri: 'journal://entries/2026-07-26' })
     assert.match(resource.result.contents[0].text, new RegExp(marker))

@@ -4,8 +4,45 @@ import * as schema from './schemas.mjs'
 
 function toolResult(data, requestId) {
   const payload = { ok: true, requestId, data }
+  const resourceUri = data?.entry?.resourceUri
+  const content = [{ type: 'text', text: JSON.stringify(payload) }]
+  if (typeof resourceUri === 'string') {
+    content.push({
+      type: 'resource_link',
+      uri: resourceUri,
+      name: 'journal-entry',
+      description: '完整日记正文，仅在明确需要时读取。',
+      mimeType: 'application/json',
+    })
+  }
   return {
-    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    content,
+    structuredContent: payload,
+  }
+}
+
+function entryResourceResult(value, requestId) {
+  const contentLength = typeof value.entry.content === 'string'
+    ? value.entry.content.length
+    : value.entry.blocks?.reduce((total, block) => total + (block.content?.length ?? 0), 0) ?? 0
+  const data = {
+    ...metadataOnly(value),
+    resourceIncluded: true,
+    contentLength,
+  }
+  const payload = { ok: true, requestId, data }
+  return {
+    content: [
+      { type: 'text', text: JSON.stringify(payload) },
+      {
+        type: 'resource',
+        resource: {
+          uri: data.entry.resourceUri,
+          mimeType: 'application/json',
+          text: JSON.stringify(value),
+        },
+      },
+    ],
     structuredContent: payload,
   }
 }
@@ -29,7 +66,7 @@ function metadataOnly(value) {
 }
 
 export function registerJournalTools(server, store, audit, health) {
-  function register(name, config, operation) {
+  function register(name, config, operation, formatResult = toolResult, resourceName = '') {
     server.registerTool(name, config, async (args = {}) => {
       const started = Date.now()
       const requestId = typeof args.requestId === 'string'
@@ -38,6 +75,15 @@ export function registerJournalTools(server, store, audit, health) {
       health.toolCalls += 1
       try {
         const data = await operation(args)
+        if (resourceName) {
+          health.resourceReads += 1
+          await audit.record({
+            event: 'resource_read',
+            resource: resourceName,
+            durationMs: Date.now() - started,
+            outcome: 'success',
+          })
+        }
         await audit.record({
           event: 'tool_call',
           requestId,
@@ -45,10 +91,19 @@ export function registerJournalTools(server, store, audit, health) {
           durationMs: Date.now() - started,
           outcome: 'success',
         })
-        return toolResult(data, requestId)
+        return formatResult(data, requestId)
       } catch (error) {
         health.toolFailures += 1
         const safe = safeError(error)
+        if (resourceName) {
+          await audit.record({
+            event: 'resource_read',
+            resource: resourceName,
+            durationMs: Date.now() - started,
+            outcome: 'error',
+            errorCode: safe.code,
+          })
+        }
         await audit.record({
           event: 'tool_call',
           requestId,
@@ -100,10 +155,10 @@ export function registerJournalTools(server, store, audit, health) {
 
   register('journal_get_entry', {
     title: '读取日记元数据',
-    description: '读取指定日期的元数据、revision 和 Resource URI，不在工具响应中返回正文。',
+    description: '读取指定日期的元数据，并以 MCP Resource 内容块提供完整正文。',
     inputSchema: { date: schema.date },
     annotations: readOnly,
-  }, async ({ date }) => metadataOnly(await store.getEntry(date)))
+  }, async ({ date }) => await store.getEntry(date), entryResourceResult, 'journal-entry')
 
   register('journal_create_entry', {
     title: '创建日记',

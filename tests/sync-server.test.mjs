@@ -117,8 +117,12 @@ test('journal sync rejects an older revision without touching real data', async 
     })
     assert.equal(mcpResponse.status, 200)
     const mcpBody = await mcpResponse.text()
-    assert.match(mcpBody, /journal:\/\/entries\/2026-07-22/)
-    assert.doesNotMatch(mcpBody, /newer content/)
+    const mcpPayload = JSON.parse(mcpBody.match(/^data: (.+)$/m)[1])
+    assert.equal(mcpPayload.result.content[1].type, 'resource')
+    assert.equal(mcpPayload.result.content[1].resource.uri, 'journal://entries/2026-07-22')
+    assert.doesNotMatch(mcpPayload.result.content[0].text, /newer content/)
+    assert.doesNotMatch(JSON.stringify(mcpPayload.result.structuredContent), /newer content/)
+    assert.match(mcpPayload.result.content[1].resource.text, /newer content/)
     assert.doesNotMatch(mcpBody, /base64/)
   } finally {
     if (server.exitCode === null) {

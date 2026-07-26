@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 将 Journal Tunnel 健康端口从 Windows 保留范围内的 8987 迁移到 8887，并补齐 Secure MCP
+  Tunnel doctor 所需的 HTTP MCP OAuth 发现元数据。
+- Tunnel doctor 改用临时 loopback 端口，允许在正式 Tunnel 服务运行时完成诊断。
+- `journal_get_entry` 使用标准 MCP Resource 内容块承载完整正文，普通文本和
+  `structuredContent` 只保留元数据与脱敏长度。
+- MCP 升级脚本在 Windows 自动停止依赖 Tunnel 后恢复其原运行状态，并等待 Tunnel ready。
+- 服务验证将认证、LAN 隔离、单进程监听和敏感日志扫描改为失败即非零退出。
+
+### Verified
+
+- 独立“拾光日记”ChatGPT 应用完成真实状态、列表、Resource、元数据写入、同请求重放和
+  MCP 重启后重放；revision 未在重放时再次增加。
+- Journal MCP/Tunnel 均为自动服务且 ready，Tunnel doctor 通过；Journal 重启未改变其他
+  MCP 服务状态，审计日志扫描未发现令牌或日记敏感值。
+
 ## [1.0.1-debug] - 2026-07-26
 
 ### Added

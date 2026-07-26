@@ -65,7 +65,7 @@ foreach ($value in $sensitiveValues) {
     if ($audit.Contains($value)) { $sensitiveValueFound = $true }
 }
 
-[pscustomobject]@{
+$result = [pscustomobject]@{
     AnonymousStatus = $anonymousStatus
     AuthorizedState = $status.state
     ApiVersion = $capabilities.apiVersion
@@ -77,6 +77,20 @@ foreach ($value in $sensitiveValues) {
     ListenerProcessCount = $listenerProcesses.Count
     AuditLineCount = @($audit -split "`n" | Where-Object { $_ }).Count
     SensitiveValueFound = $sensitiveValueFound
-} | ConvertTo-Json
+}
+$result | ConvertTo-Json
+
+if ($result.AnonymousStatus -ne 401 -or
+    $result.AuthorizedState -ne 'ready' -or
+    $result.ApiVersion -ne 1 -or
+    $result.Authentication -ne 'bearer_token' -or
+    $result.ControlCommandCount -ne 0 -or
+    -not $result.LanHealth -or
+    $result.LanAnonymousStatus -ne 401 -or
+    $result.LanMcpStatus -ne 404 -or
+    $result.ListenerProcessCount -ne 1 -or
+    $result.SensitiveValueFound) {
+    throw 'Journal service verification failed.'
+}
 
 $token = $null

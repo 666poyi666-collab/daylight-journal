@@ -34,6 +34,17 @@ test('Journal v1 API authenticates, reports capabilities, and maps conflicts', a
     assert.equal((await fetch(`${baseUrl}/journal/all`)).status, 401)
     assert.equal((await fetch(`${baseUrl}/journal/all`, { headers })).status, 200)
     assert.equal((await fetch(`${syncBaseUrl}/healthz`)).status, 200)
+
+    const protectedResource = await fetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp`)
+      .then((response) => response.json())
+    assert.equal(protectedResource.resource, `${baseUrl}/mcp`)
+    assert.deepEqual(protectedResource.authorization_servers, [baseUrl])
+
+    const authorizationServer = await fetch(`${baseUrl}/.well-known/oauth-authorization-server`)
+      .then((response) => response.json())
+    assert.equal(authorizationServer.issuer, baseUrl)
+    assert.equal(authorizationServer.token_endpoint, `${baseUrl}/oauth/token`)
+    assert.deepEqual(authorizationServer.code_challenge_methods_supported, ['S256'])
     assert.equal((await fetch(`${syncBaseUrl}/journal/all`)).status, 401)
     assert.equal((await fetch(`${syncBaseUrl}/journal/all`, { headers })).status, 200)
     assert.equal((await fetch(`${syncBaseUrl}/mcp`)).status, 404)

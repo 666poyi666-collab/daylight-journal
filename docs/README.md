@@ -23,12 +23,12 @@
 | [UX-VISUAL-DIRECTION](UX-VISUAL-DIRECTION.md) | 后续 Soft Tech 视觉设计约束 |
 | [ROADMAP](ROADMAP.md) | 迭代顺序与技术债 |
 
-## 当前状态（2026-07-25）
+## 当前状态（2026-07-26）
 
 - 写日记、历史、日历、心情、标签、可选单图封面：可用
 - 手机/平板/网页同步：可用，使用 HTTPS 隧道
 - 独立 `PoyiJournalMcp`：本地安装、健康检查、故障自动恢复和 MCP 契约已验证
-- 独立 `PoyiJournalTunnel` 与 ChatGPT「拾光日记」应用：按 `MCP-OPERATIONS.md` 记录验收状态
+- 独立 `PoyiJournalTunnel` 与 ChatGPT「拾光日记」应用：真实读写、Resource、重放和重启恢复已验收
 - Obsidian：目前提供 Markdown 导出，尚未做 Vault 双向同步
 - 前端视觉：Editorial Paper 第一版可用；已完成单一样式入口、页面层级和四档响应式无障碍重构
 - 工程治理：需求基线、开发手册、Bug 台账和变更日志已建立

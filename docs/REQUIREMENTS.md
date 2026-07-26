@@ -27,7 +27,7 @@
 | FR-012 | 服务配置 | 公网同步地址和 ChatGPT 项目通过构建环境显式配置，不进入公开源码 | 已完成 |
 | FR-013 | 独立 Journal MCP | 业务逻辑与 MCP 协议分层；提供状态、查询、创建、追加、元数据更新及完整正文 Resource | 已完成 |
 | FR-014 | 安全幂等写入 | 写操作要求 UUID `requestId`、`expectedRevision`，重复请求重放且重启后仍有效 | 已完成 |
-| FR-015 | 独立安全链路 | `PoyiJournalMcp`、`PoyiJournalTunnel` 和 ChatGPT 应用独立运行，不依赖统一 Gateway | Tunnel/ChatGPT 验收中 |
+| FR-015 | 独立安全链路 | `PoyiJournalMcp`、`PoyiJournalTunnel` 和 ChatGPT 应用独立运行，不依赖统一 Gateway | 已完成；真实读写、Resource、重放与重启恢复已验证 |
 | FR-016 | 手机稳定配对 | LAN API 用 mDNS、稳定 serviceId 和独立配对令牌发现；不依赖 ADB 或固定 IP | 已完成 |
 
 ## 非功能需求
