@@ -40,6 +40,17 @@ import { resizeJournalImage } from '../journal/image.ts'
 import { journalMoods } from '../journal/moods.ts'
 import type { SaveState, SyncState } from '../journal/status.ts'
 
+/** 今天的时段词：让日期区带一点此刻的空气感。 */
+function timePhase(): string {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 9) return '清晨'
+  if (hour < 12) return '上午'
+  if (hour < 17) return '午后'
+  if (hour < 20) return '傍晚'
+  if (hour < 23) return '夜里'
+  return '深夜'
+}
+
 function growTextarea(element: HTMLTextAreaElement) {
   if (element.scrollHeight > element.clientHeight) {
     element.style.height = `${element.scrollHeight}px`
@@ -537,7 +548,7 @@ export function EditorPage({
             <div className="date-subline">
               <span>
                 {format(parseISO(selectedDate), "yyyy年")} ·{" "}
-                {selectedDate === todayKey ? "今天" : "往日记录"}
+                {selectedDate === todayKey ? `今天 · ${timePhase()}` : "往日记录"}
               </span>
               <i className={hasEntry ? "recorded" : ""}>
                 {hasEntry ? "已记录" : "新的一页"}

@@ -55,8 +55,8 @@
    * 这种混排是这套视觉的核心质感来源。 */
   --font-ui: 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI',
     'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-display: Georgia, 'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC',
-    'Noto Serif SC', STSong, SimSun, serif;
+  --font-display: 'Fraunces', Georgia, 'Songti SC', 'Source Han Serif SC',
+    'Noto Serif CJK SC', 'Noto Serif SC', STSong, SimSun, serif;
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', ui-monospace,
     'Courier New', monospace;
 
@@ -91,6 +91,9 @@
 
   /* ── 版心：中文正文一行约 34–38 字，长文阅读最舒服的区间 ── */
   --measure: 680px;
+
+  /* ── 纸纹：feTurbulence 噪点贴片，浏览器栅格化后按图片平铺，运行时零开销 ── */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.042 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
 
   color-scheme: light;
   color: var(--ink);
@@ -141,6 +144,8 @@
   --mood-4: #d7ab54;
   --mood-5: #e4885a;
 
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+
   --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.42);
   --shadow-float: 0 2px 4px rgba(0, 0, 0, 0.5), 0 24px 60px rgba(0, 0, 0, 0.55);
   --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
@@ -183,6 +188,12 @@ textarea,
 select {
   font: inherit;
   color: inherit;
+}
+
+/* 书写细节：光标是纸面上唯一持续存在的"笔尖"，用强调色 */
+input,
+textarea {
+  caret-color: var(--accent);
 }
 
 button {

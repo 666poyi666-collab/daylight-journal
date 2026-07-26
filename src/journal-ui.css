@@ -55,6 +55,16 @@
    1. 外壳
    ══════════════════════════════════════════════════════════════ */
 
+/* 纸纹覆层：3–5% 透明度的噪点铺满视口，正文与深色面板共用同一张"纸" */
+.paper-grain {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: var(--grain);
+  background-size: 180px 180px;
+  pointer-events: none;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 252px minmax(0, 1fr);
@@ -145,6 +155,7 @@
 
 .brand span {
   overflow: hidden;
+  font-family: var(--font-display);
   font-size: 9.5px;
   font-weight: 500;
   letter-spacing: 0.15em;
@@ -569,6 +580,15 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior-y: contain;
+  /* 每次切换视图 key 重挂载，页面轻轻从下方浮入 */
+  animation: view-in 240ms var(--ease-out);
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
 
 .view-stage.editor-stage {
@@ -1190,6 +1210,7 @@
 /* ── 输入法上方工具条（portal 到 body） ─────── */
 
 .keyboard-format-toolbar {
+  animation: sheet-up 220ms var(--ease-out);
   position: fixed;
   bottom: 0;
   left: 0;
@@ -1203,6 +1224,13 @@
   background: var(--surface);
   border-top: 1px solid var(--rule);
   box-shadow: var(--shadow-pop);
+}
+
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
 }
 
 .keyboard-format-toolbar > span {
@@ -1390,6 +1418,13 @@
 .mood-row button.active {
   background: var(--accent-wash);
   box-shadow: inset 0 0 0 1.5px var(--accent);
+  animation: mood-pop 260ms var(--ease-out);
+}
+
+@keyframes mood-pop {
+  40% {
+    transform: scale(1.14);
+  }
 }
 
 .mood-row button:nth-child(1).active {
@@ -1438,6 +1473,7 @@
 
 .tag-list button {
   display: inline-flex;
+  animation: chip-in 180ms var(--ease-out);
   align-items: center;
   gap: 4px;
   padding: 4px 8px 4px 10px;
@@ -1457,6 +1493,14 @@
   width: 11px;
   height: 11px;
   opacity: 0.55;
+}
+
+
+@keyframes chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
 }
 
 .tag-input {
@@ -2080,6 +2124,30 @@
   gap: 34px;
 }
 
+.history-month {
+  animation: rise-in 300ms var(--ease-out) both;
+}
+
+.history-month:nth-child(2) {
+  animation-delay: 45ms;
+}
+.history-month:nth-child(3) {
+  animation-delay: 90ms;
+}
+.history-month:nth-child(4) {
+  animation-delay: 135ms;
+}
+.history-month:nth-child(n + 5) {
+  animation-delay: 180ms;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 .history-month-label {
   display: flex;
   align-items: baseline;
@@ -2314,6 +2382,25 @@
   box-shadow: inset 0 0 0 1px var(--ok);
 }
 
+.secondary-button.is-danger {
+  color: var(--danger);
+}
+
+.secondary-button.is-danger:hover {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.secondary-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .empty-action {
   margin-top: 8px;
 }
@@ -2541,6 +2628,7 @@
 
 .integration-badge {
   padding: 3px 8px;
+  font-family: var(--font-display);
   font-size: 9.5px;
   color: var(--accent);
   background: var(--accent-wash);
@@ -2630,7 +2718,34 @@
   gap: 0;
   padding: 0;
   background: var(--paper);
-  animation: splash-out 1.08s var(--ease) forwards;
+  animation: splash-out 1.26s var(--ease) forwards;
+}
+
+/* 晨光：从页面上方洗下来的一层暖光，呼应"拾光" */
+.product-splash::before {
+  content: '';
+  position: absolute;
+  inset: -10%;
+  background: radial-gradient(
+    58% 42% at 50% 16%,
+    var(--accent-wash),
+    transparent 72%
+  );
+  animation: splash-wash 1.26s var(--ease) both;
+  pointer-events: none;
+}
+
+@keyframes splash-wash {
+  0%,
+  18% {
+    opacity: 0;
+  }
+  60% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0.75;
+  }
 }
 
 .product-splash-mark {
@@ -2652,21 +2767,58 @@
   object-fit: cover;
 }
 
+/* 掠光：一道细窄的高光扫过图标，只出现一次 */
 .product-splash-mark i {
-  display: none;
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 32%,
+    rgba(255, 255, 255, 0.5) 47%,
+    transparent 62%
+  );
+  transform: translateX(-130%);
+  animation: splash-shine 640ms 420ms var(--ease) forwards;
+  pointer-events: none;
 }
 
+:root[data-theme='dark'] .product-splash-mark i {
+  background: linear-gradient(
+    115deg,
+    transparent 32%,
+    rgba(255, 255, 255, 0.16) 47%,
+    transparent 62%
+  );
+}
+
+@keyframes splash-shine {
+  to {
+    transform: translateX(130%);
+  }
+}
+
+/* 标题字距从松到定，像铅字被排进版 */
 .product-splash strong {
   font-family: var(--font-display);
   font-size: 30px;
   font-weight: 600;
   letter-spacing: 0.3em;
   text-indent: 0.3em;
-  animation: splash-rise 620ms 80ms var(--ease-out) both;
+  animation: splash-title 680ms 80ms var(--ease-out) both;
+}
+
+@keyframes splash-title {
+  from {
+    opacity: 0;
+    letter-spacing: 0.52em;
+    transform: translateY(8px);
+  }
 }
 
 .product-splash small {
   margin-top: 8px;
+  font-family: var(--font-display);
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.36em;
@@ -2677,11 +2829,11 @@
 }
 
 .product-splash-line {
+  position: relative;
   display: block;
-  width: 120px;
+  width: 140px;
   height: 1px;
   margin: 20px 0;
-  overflow: hidden;
   background: var(--rule);
 }
 
@@ -2691,7 +2843,35 @@
   height: 100%;
   background: var(--accent);
   transform-origin: left;
-  animation: splash-line 900ms 200ms var(--ease) both;
+  animation: splash-line 680ms 300ms var(--ease) both;
+}
+
+/* 引燃点：一粒赭金火星沿墨线走完全程 */
+.product-splash-line::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  transform: translate(0, -50%);
+  animation: splash-spark 680ms 300ms var(--ease) both;
+}
+
+@keyframes splash-spark {
+  from {
+    opacity: 0;
+    transform: translate(0, -50%);
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translate(139px, -50%);
+  }
 }
 
 .product-splash em {
@@ -2701,7 +2881,7 @@
   letter-spacing: 0.24em;
   text-indent: 0.24em;
   color: var(--ink-3);
-  animation: splash-rise 620ms 240ms var(--ease-out) both;
+  animation: splash-rise 620ms 480ms var(--ease-out) both;
 }
 
 @keyframes splash-rise {
@@ -2719,7 +2899,7 @@
 
 @keyframes splash-out {
   0%,
-  82% {
+  78% {
     opacity: 1;
   }
   100% {
@@ -2730,11 +2910,14 @@
 
 @media (prefers-reduced-motion: reduce) {
   .product-splash,
+  .product-splash::before,
   .product-splash-mark,
+  .product-splash-mark i,
   .product-splash strong,
   .product-splash small,
   .product-splash em,
-  .product-splash-line i {
+  .product-splash-line i,
+  .product-splash-line::after {
     animation: none;
   }
 }
@@ -3296,5 +3479,209 @@
   .mood-row button {
     height: 42px;
     font-size: 19px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   12. 应用锁
+   ══════════════════════════════════════════════════════════════ */
+
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  padding: 24px;
+  overflow-y: auto;
+  background: var(--paper);
+  animation: fade-in var(--t-base) var(--ease);
+}
+
+.lock-screen .brand-mark {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 16px;
+  border-radius: 14px;
+}
+
+.lock-title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-indent: 0.24em;
+}
+
+.lock-hint {
+  min-height: 1.6em;
+  margin-top: 6px;
+  font-size: var(--t-small);
+  color: var(--ink-3);
+}
+
+.lock-dots {
+  display: flex;
+  gap: 14px;
+  margin: 24px 0 28px;
+}
+
+.lock-dots i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--rule-strong);
+  transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.lock-dots i.filled {
+  background: var(--ink);
+  box-shadow: none;
+  transform: scale(1.08);
+}
+
+.lock-dots.is-error {
+  animation: lock-shake 360ms var(--ease);
+}
+
+.lock-dots.is-error i.filled {
+  background: var(--danger);
+}
+
+@keyframes lock-shake {
+  20% {
+    transform: translateX(-8px);
+  }
+  40% {
+    transform: translateX(7px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
+}
+
+.lock-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 74px);
+  gap: 13px;
+}
+
+.lock-pad button {
+  display: grid;
+  place-items: center;
+  height: 64px;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: inset 0 0 0 1px var(--rule);
+  transition: background var(--t-fast) var(--ease), transform var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease);
+}
+
+.lock-pad button:active {
+  background: var(--surface-hover);
+  transform: scale(0.95);
+}
+
+.lock-pad button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.lock-pad .lock-delete {
+  background: transparent;
+  box-shadow: none;
+}
+
+.lock-pad .lock-delete svg {
+  width: 22px;
+  height: 22px;
+  color: var(--ink-3);
+}
+
+.lock-blank {
+  visibility: hidden;
+}
+
+.lock-forgot {
+  max-width: 264px;
+  margin-top: 26px;
+  text-align: center;
+}
+
+.lock-forgot summary {
+  font-size: var(--t-micro);
+  color: var(--ink-4);
+  cursor: pointer;
+  list-style: none;
+}
+
+.lock-forgot summary::-webkit-details-marker {
+  display: none;
+}
+
+.lock-forgot summary:hover {
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.lock-forgot p {
+  margin-top: 10px;
+  font-size: var(--t-micro);
+  line-height: 1.8;
+  color: var(--ink-3);
+  text-align: left;
+}
+
+/* 横屏矮窗：左侧身份与状态，右侧完整密码盘 */
+@media (orientation: landscape) and (max-height: 520px) {
+  .lock-screen {
+    grid-template-columns: auto auto;
+    column-gap: 56px;
+    align-items: center;
+    align-content: center;
+  }
+
+  .lock-screen .brand-mark {
+    grid-column: 1;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 8px;
+  }
+
+  .lock-title,
+  .lock-hint,
+  .lock-dots,
+  .lock-forgot {
+    grid-column: 1;
+  }
+
+  .lock-dots {
+    margin: 14px 0 0;
+  }
+
+  .lock-forgot {
+    margin-top: 16px;
+  }
+
+  .lock-pad {
+    grid-column: 2;
+    grid-row: 1 / span 5;
+    grid-template-columns: repeat(3, 62px);
+    gap: 8px;
+  }
+
+  .lock-pad button {
+    height: 50px;
+    font-size: 20px;
   }
 }

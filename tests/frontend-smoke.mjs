@@ -591,6 +591,41 @@ try {
     await context.close()
   }
 
+  {
+    const { context, page, errors } = await openApp({
+      viewport: { width: 390, height: 844 },
+    })
+    await page.locator('.mobile-nav').getByRole('button', { name: '设置' }).click()
+    await page.getByLabel('设置应用锁密码').fill('2468')
+    await page.getByLabel('确认应用锁密码').fill('2468')
+    await page.getByRole('button', { name: '开启应用锁' }).click()
+    await page.getByText('应用锁已开启，下次打开需要输入密码。').waitFor()
+
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    const lock = page.getByRole('dialog', { name: '应用锁' })
+    await lock.waitFor()
+    assert.equal(await page.locator('.app-shell').count(), 0)
+    for (const digit of ['9', '9', '9', '9']) {
+      await lock.getByRole('button', { name: digit, exact: true }).click()
+    }
+    await lock.getByText('密码不正确').waitFor()
+    await page.waitForTimeout(500)
+    for (const digit of ['2', '4', '6', '8']) {
+      await lock.getByRole('button', { name: digit, exact: true }).click()
+    }
+    await page.locator('.app-shell').waitFor()
+
+    await page.locator('.mobile-nav').getByRole('button', { name: '设置' }).click()
+    await page.getByLabel('当前应用锁密码').fill('2468')
+    await page.getByRole('button', { name: '关闭应用锁' }).click()
+    await page.getByText('应用锁已关闭。', { exact: true }).waitFor()
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.locator('.app-shell').waitFor()
+    assert.equal(await page.getByRole('dialog', { name: '应用锁' }).count(), 0)
+    assert.deepEqual(errors, [])
+    await context.close()
+  }
+
   console.log(`Frontend smoke tests passed. Artifacts: ${artifactDir}`)
 } finally {
   await browser.close()
