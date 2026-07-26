@@ -22,10 +22,25 @@
 
 ### 字体
 
-- 显示层（日期、标题、月份、统计数字）：`'Fraunces', Georgia, "Songti SC", …` —— 拉丁字形先行，数字与拉丁走 Fraunces（老式衬线数字，@fontsource 打包 latin 500/600 两档约 45KB，离线可用），汉字回落宋体，混排出编辑感
-- 界面与正文：`"PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei UI", …`
+三层字族，全部随包分发、离线可用：
+
+- **显示层**（日期、标题、月份、统计数字、密码键盘）：`'Fraunces', Georgia, 'Songti SC', …`
+  —— Fraunces 老式衬线数字（@fontsource latin 500/600 约 45KB），汉字回落宋体
+- **书写层（`--font-write`，正文即书）**：`'Source Serif 4', 'Source Han Serif SC Subset', …`
+  —— 日记正文与历史预览默认衬线，对齐 Claude 正文的阅读感（Source Serif 4 是
+  Tiempos 一系过渡衬线的开源近亲）。**Android 不预装任何中文衬线**，因此打包了
+  自制思源宋体子集（GB2312 全集 6763 字 + CJK 标点，woff2 约 1.3MB，来源与许可见
+  `src/assets/fonts/README.md`）；子集外生僻字回落黑体是可接受取舍。
+  用户可在设置「书写字体」切回黑体（`:root[data-write-font='sans']`），偏好存本机
+- **界面层**：`'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', …` —— 控件、导航、
+  元信息永远无衬线，与正文形成功能分层
 - 正文 16.5px / 行高 1.95 / 字距 0.012em；版心 680px（中文一行约 34–38 字）
-- 不依赖任何在线字体：离线和 Android WebView 下必须成立
+
+子集重生成（fonttools + brotli）：
+
+```bash
+python -m fontTools.subset SourceHanSerifCN-Regular.otf   --output-file=src/assets/fonts/source-han-serif-sc-regular-gb2312.woff2   --flavor=woff2 --text-file=gb2312-all.txt   --unicodes=U+3000-303F,U+FF00-FF65,U+FE41-FE44,U+2013-2026,U+00B7,U+3007   --layout-features='ccmp,locl,mark,mkmk,kern,palt' --no-hinting --desubroutinize
+```
 
 ### 形状、材质与动效
 

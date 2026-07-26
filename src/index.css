@@ -60,6 +60,14 @@
   --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', ui-monospace,
     'Courier New', monospace;
 
+  /* ── 书写字族：正文即书 ────────────────────
+   * 日记正文默认衬线（Source Serif 4 + 自打包思源宋体子集），像一本写给
+   * 未来自己的书；Android 没有系统宋体，所以中文衬线必须随应用分发。
+   * 用户可在设置切回黑体，由 :root[data-write-font='sans'] 接管。 */
+  --font-write: 'Source Serif 4', 'Source Han Serif SC Subset', Georgia,
+    'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC', STSong, SimSun,
+    serif;
+
   /* ── 字号阶 ──────────────────────────────── */
   --t-micro: 11px;
   --t-small: 12.5px;
@@ -103,6 +111,10 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+:root[data-write-font='sans'] {
+  --font-write: var(--font-ui);
 }
 
 :root[data-theme='dark'] {
@@ -153,6 +165,15 @@
   color-scheme: dark;
   color: var(--ink);
   background: var(--paper);
+}
+
+/* 思源宋体 GB2312 子集（1.3MB，随包分发），许可与来源见 src/assets/fonts/README.md */
+@font-face {
+  font-family: 'Source Han Serif SC Subset';
+  src: url('./assets/fonts/source-han-serif-sc-regular-gb2312.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
 *,

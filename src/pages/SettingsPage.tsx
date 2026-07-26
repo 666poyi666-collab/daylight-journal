@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Archive, Bot, Check, Download, FileText, KeyRound, LockKeyhole, Save } from 'lucide-react'
+import { Archive, Bot, Check, Download, FileText, KeyRound, LockKeyhole, Save, Type } from 'lucide-react'
 import { format } from 'date-fns'
 import type { JournalEntry } from '../journal/model.ts'
 import type { StorageIssue } from '../journal/storage.ts'
@@ -196,6 +196,8 @@ function LockSection({
 }
 
 type SettingsPageProps = LockSectionProps & {
+  writeFont: 'serif' | 'sans'
+  onWriteFont: (value: 'serif' | 'sans') => void
   chatGptUrl: string
   defaultChatGptUrl: string
   journalApiUrl: string
@@ -209,6 +211,8 @@ type SettingsPageProps = LockSectionProps & {
 }
 
 export function SettingsPage({
+  writeFont,
+  onWriteFont,
   lockEnabled,
   onEnableLock,
   onDisableLock,
@@ -415,6 +419,38 @@ export function SettingsPage({
                 </>
               )}
             </button>
+          </div>
+        </section>
+        <section>
+          <div className="settings-icon">
+            <Type />
+          </div>
+          <div>
+            <h3>书写字体</h3>
+            <p>
+              正文即书：默认用衬线体书写与回看，中文衬线已随应用打包，
+              手机上同样生效。
+            </p>
+            <div className="font-choice-row" role="radiogroup" aria-label="书写字体">
+              <button
+                className={`font-choice is-serif ${writeFont === 'serif' ? 'active' : ''}`}
+                role="radio"
+                aria-checked={writeFont === 'serif'}
+                onClick={() => onWriteFont('serif')}
+              >
+                <strong>今日，拾光。</strong>
+                <small>衬线 · 像一本书</small>
+              </button>
+              <button
+                className={`font-choice is-sans ${writeFont === 'sans' ? 'active' : ''}`}
+                role="radio"
+                aria-checked={writeFont === 'sans'}
+                onClick={() => onWriteFont('sans')}
+              >
+                <strong>今日，拾光。</strong>
+                <small>黑体 · 像一张便签</small>
+              </button>
+            </div>
           </div>
         </section>
         <LockSection

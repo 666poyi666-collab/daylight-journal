@@ -133,6 +133,9 @@ function App() {
   const [dark, setDark] = useState(
     () => readStorageValue('daylight-theme') === 'dark',
   )
+  const [writeFont, setWriteFont] = useState<'serif' | 'sans'>(() =>
+    readStorageValue('daylight-write-font') === 'sans' ? 'sans' : 'serif',
+  )
   const [lockRecord, setLockRecord] = useState<LockRecord | null>(() =>
     decodeLockRecord(readStorageValue(LOCK_STORAGE_KEY)),
   )
@@ -267,6 +270,11 @@ function App() {
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute('content', dark ? '#131211' : '#f7f4ed')
   }, [dark]);
+
+  useEffect(() => {
+    document.documentElement.dataset.writeFont = writeFont
+    writeStorageValue('daylight-write-font', writeFont)
+  }, [writeFont])
 
   /** 主题切换用 View Transitions 做一次整页交叉淡化；不支持或减少动效时直接切。 */
   const toggleDark = useCallback(() => {
@@ -962,6 +970,8 @@ function App() {
             )}
             {view === "settings" && (
               <SettingsPage
+                writeFont={writeFont}
+                onWriteFont={setWriteFont}
                 lockEnabled={Boolean(lockRecord)}
                 onEnableLock={enableLock}
                 onDisableLock={disableLock}
