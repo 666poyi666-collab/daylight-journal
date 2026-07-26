@@ -93,6 +93,8 @@
 - 端口保留修复后服务重装：install 全程通过、readyz/metrics/LAN 健康、verify 退出 0、
   Tunnel ready、部署冒烟（7 工具 + Resource 模板 + mDNS 发现）通过；生产 MCP 现场
   确认 `journal_get_entry` 分页参数与服务端 instructions 已生效。
+- 真实 ChatGPT「拾光日记」复盘按新分页契约执行：复盘引用日记正文原句而非列表摘要，
+  `resource_link` 在会话中呈现为附件，读取流程为列表定位后逐篇读取正文。
 - 独立“拾光日记”ChatGPT 应用完成真实状态、列表、Resource、元数据写入、同请求重放和
   MCP 重启后重放；revision 未在重放时再次增加。
 - Journal MCP/Tunnel 均为自动服务且 ready，Tunnel doctor 通过；Journal 重启未改变其他
