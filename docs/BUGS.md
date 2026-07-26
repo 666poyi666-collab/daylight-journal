@@ -34,8 +34,8 @@
 | BUG-015 | 2026-07 | 升级 MCP 时依赖服务 Tunnel 被 Windows 停止后没有恢复 | 安装脚本记忆升级前状态，在 MCP ready 后恢复并等待 Tunnel ready；实际升级回归通过 |
 | BUG-016 | 2026-07 | 服务验证发现敏感日志时仍可能以退出码 0 结束 | 匿名认证、LAN 隔离、单监听进程和敏感值扫描均改为硬断言；管理员上下文验证退出码 0 |
 | BUG-017 | 2026-07 | ChatGPT 同样不读取嵌入式 Resource 内容块（BUG-014 方案失效），复盘只依据列表摘要 | `journal_get_entry` 改为 `offset`/`maxChars` 分页直接返回正文并附 `resource_link`；列表/搜索、服务端 instructions 与复盘提示词统一强制逐篇读完正文；契约与同步测试覆盖分块读取，真实 ChatGPT 复验待执行 |
-| BUG-018 | 2026-07 | MCP 升级脚本对数据根 `/T` 遍历踩到运行中 Tunnel 锁定的 WinSW 日志，icacls 的 stderr 在 Stop 模式下中断安装，服务被重装但从未启动（假活：服务 RUNNING、端口无监听） | icacls 改经 `Invoke-Icacls` 以 Continue 执行并按退出码判定；数据 ACL 遍历排除 `service-logs`（单独授 `service-logs\mcp`）与 `tunnel-runtime-key.dpapi`，顺带取消对 Tunnel DPAPI 密钥的 MCP ACE；服务资产测试锁定新断言，提权重装后 readyz 复验 |
-| BUG-019 | 2026-07 | WinNAT 动态排除端口段漂移到 8757–8856 吞掉 8780/8781：特权进程 bind“成功”但无监听、netstat 无条目、loopback 连接被拒，服务持续假活并被误判为启动卡死；同机普通用户 bind 直接 EACCES | `JOURNAL_TRACE` 打点证实进程各启动阶段全部健康、监听回调已触发，`netsh` 确认动态排除段覆盖；两个安装脚本以管理员保留段固定 8780/8781 与 8887（动态段冲突时临时重启 winnat），verify 前置检测动态排除命中即失败 |
+| BUG-018 | 2026-07 | MCP 升级脚本对数据根 `/T` 遍历踩到运行中 Tunnel 锁定的 WinSW 日志，icacls 的 stderr 在 Stop 模式下中断安装，服务被重装但从未启动（假活：服务 RUNNING、端口无监听） | icacls 改经 `Invoke-Icacls` 以 Continue 执行并按退出码判定；数据 ACL 遍历排除 `service-logs`（单独授 `service-logs\mcp`）与 `tunnel-runtime-key.dpapi`，顺带取消对 Tunnel DPAPI 密钥的 MCP ACE；服务资产测试锁定新断言，提权重装 ACL 步骤全程通过 |
+| BUG-019 | 2026-07 | WinNAT 动态排除端口段漂移到 8757–8856 吞掉 8780/8781：特权进程 bind“成功”但无监听、netstat 无条目、loopback 连接被拒，服务持续假活并被误判为启动卡死；同机普通用户 bind 直接 EACCES | `JOURNAL_TRACE` 打点证实进程各启动阶段全部健康、监听回调已触发，`netsh` 确认动态排除段覆盖；两个安装脚本以管理员保留段固定 8780/8781 与 8887（动态段冲突时临时重启 winnat），verify 前置检测动态排除命中即失败；重装后 readyz/metrics/LAN、verify 退出 0、Tunnel ready、部署冒烟与分页契约现场验证全部通过 |
 
 ## 新 Bug 模板
 

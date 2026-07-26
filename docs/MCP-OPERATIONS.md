@@ -100,6 +100,16 @@ $key = Read-Host 'Journal Tunnel runtime API key' -AsSecureString
 升级顺序：先测试源码，再更新 MCP 服务，确认 8780 ready 后更新 Tunnel。卸载只使用
 Journal 的卸载脚本；禁止调用 PersonalMcpGateway 或其他项目的 WinSW 可执行文件。
 
+安装脚本会把 8780/8781（MCP）与 8887（Tunnel 健康）登记为 Windows 管理员保留端口段，
+防止 WinNAT 动态排除段漂移吞掉端口（特权 bind 会“成功”但无监听，见 BUG-019）。检查：
+
+```powershell
+netsh int ipv4 show excludedportrange protocol=tcp
+```
+
+三个端口必须显示为带 `*` 的管理员段；若被无 `*` 的动态段覆盖，重跑对应 install 脚本
+（verify.ps1 也会在该状态下前置失败并给出指引）。
+
 ## 验收命令
 
 ```powershell

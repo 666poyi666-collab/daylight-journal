@@ -88,6 +88,9 @@
 - 真机：Redmi Note 11T Pro（Android 15）经网络 ADB 安装调试包，竖屏、横屏、深色、抽屉、
   输入法工具条与四个页面逐项走查通过。
 
+- 端口保留修复后服务重装：install 全程通过、readyz/metrics/LAN 健康、verify 退出 0、
+  Tunnel ready、部署冒烟（7 工具 + Resource 模板 + mDNS 发现）通过；生产 MCP 现场
+  确认 `journal_get_entry` 分页参数与服务端 instructions 已生效。
 - 独立“拾光日记”ChatGPT 应用完成真实状态、列表、Resource、元数据写入、同请求重放和
   MCP 重启后重放；revision 未在重放时再次增加。
 - Journal MCP/Tunnel 均为自动服务且 ready，Tunnel doctor 通过；Journal 重启未改变其他
