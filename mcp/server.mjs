@@ -14,6 +14,7 @@ import { JournalHealth } from './health.mjs'
 import { registerJournalResources } from './resources.mjs'
 import { getSettings } from './settings.mjs'
 import { registerJournalTools } from './tools.mjs'
+import { trace } from './trace.mjs'
 
 export function createMcpServer(store, audit, health, version) {
   const server = new McpServer(
@@ -76,8 +77,11 @@ export function createJournalSyncApp(store, apiToken) {
 
 export async function createJournalApp(settings = getSettings()) {
   const store = new JournalStore(settings.dataDir)
+  trace('store-initialize')
   await store.initialize()
+  trace('store-initialized')
   const apiToken = await loadOrCreateApiToken(settings.dataDir)
+  trace('token-ready')
   const audit = new AuditLogger(settings.auditFile)
   const health = new JournalHealth(settings.version)
   const app = express()
@@ -129,10 +133,12 @@ export async function createJournalApp(settings = getSettings()) {
 
 export async function startJournalServer(settings = getSettings()) {
   const runtime = await createJournalApp(settings)
+  trace('app-created')
   const server = await new Promise((resolve, reject) => {
     const listener = runtime.app.listen(settings.port, settings.host, () => resolve(listener))
     listener.once('error', reject)
   })
+  trace('mcp-listening')
   let syncServer = null
   let bonjour = null
   let advertisement = null
@@ -142,9 +148,11 @@ export async function startJournalServer(settings = getSettings()) {
       const listener = syncApp.listen(settings.syncPort, settings.syncHost, () => resolve(listener))
       listener.once('error', reject)
     })
+    trace('sync-listening')
     const syncAddress = syncServer.address()
     const syncPort = typeof syncAddress === 'object' && syncAddress ? syncAddress.port : settings.syncPort
     const service = await runtime.store.initialize()
+    trace('mdns-init')
     bonjour = new Bonjour()
     advertisement = bonjour.publish({
       name: `Journal-${service.serviceId.slice(-8)}`,
@@ -153,9 +161,11 @@ export async function startJournalServer(settings = getSettings()) {
       port: syncPort,
       txt: { serviceId: service.serviceId, apiVersion: '1' },
     })
+    trace('mdns-published')
   }
   runtime.health.ready = true
   await runtime.audit.record({ event: 'service_started', outcome: 'success' })
+  trace('service-ready')
   return { ...runtime, server, syncServer, bonjour, advertisement }
 }
 

@@ -17,6 +17,7 @@ test('Journal services, ports, and profile are isolated', async () => {
   assert.match(mcpXml, /%BASE%\\mcp\\main\.mjs/)
   assert.match(mcpXml, /JOURNAL_SYNC_HOST[^\n]+0\.0\.0\.0/)
   assert.match(mcpXml, /JOURNAL_SYNC_PORT[^\n]+8781/)
+  assert.match(mcpXml, /JOURNAL_TRACE[^\n]+1/)
   assert.match(tunnelXml, /<id>PoyiJournalTunnel<\/id>/)
   assert.match(tunnelXml, /<depend>PoyiJournalMcp<\/depend>/)
   assert.match(tunnelRun, /--profile journal/)
@@ -40,7 +41,7 @@ test('Journal services, ports, and profile are isolated', async () => {
 
 test('Journal MCP runtime has no raw console logging or sensitive audit fields', async () => {
   const runtimeFiles = await Promise.all(
-    ['audit.mjs', 'errors.mjs', 'health.mjs', 'main.mjs', 'resources.mjs', 'server.mjs', 'settings.mjs', 'tools.mjs']
+    ['audit.mjs', 'errors.mjs', 'health.mjs', 'main.mjs', 'resources.mjs', 'server.mjs', 'settings.mjs', 'tools.mjs', 'trace.mjs']
       .map((name) => fs.readFile(path.join(root, 'mcp', name), 'utf8')),
   )
   const runtime = runtimeFiles.join('\n')

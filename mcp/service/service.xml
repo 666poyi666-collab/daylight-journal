@@ -10,6 +10,7 @@
   <env name="JOURNAL_MCP_PORT" value="8780" />
   <env name="JOURNAL_SYNC_HOST" value="0.0.0.0" />
   <env name="JOURNAL_SYNC_PORT" value="8781" />
+  <env name="JOURNAL_TRACE" value="1" />
   <startmode>Automatic</startmode>
   <delayedAutoStart>true</delayedAutoStart>
   <stoptimeout>20sec</stoptimeout>
