@@ -34,6 +34,7 @@ import {
   emptyEntry,
   hasEntryContent,
   hasReviewableText,
+  journalPreviewText,
   mergeEntries,
   type JournalEntries,
   type JournalEntry,
@@ -49,7 +50,7 @@ import {
 } from './journal/storage.ts'
 import type { SaveState, SyncState } from './journal/status.ts'
 import { buildReviewPrompt } from './journal/review.ts'
-import './editorial-ui.css'
+import './journal-ui.css'
 
 type View = 'today' | 'calendar' | 'history' | 'settings'
 
@@ -90,7 +91,7 @@ interface ViewScrollPosition {
 function App() {
   const todayKey = useTodayKey()
   const compactNavigation = useMediaQuery(
-    '(max-width: 699px), (orientation: landscape) and (max-width: 820px)',
+    '(max-width: 699px), (orientation: landscape) and (max-width: 820px), (orientation: landscape) and (max-height: 520px)',
   )
   const [initialLoad] = useState(loadJournalEntries)
   const [view, setView] = useState<View>('today')
@@ -232,7 +233,7 @@ function App() {
     writeStorageValue('daylight-theme', dark ? 'dark' : 'light')
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', dark ? '#111813' : '#526f5c')
+      ?.setAttribute('content', dark ? '#131211' : '#f7f4ed')
   }, [dark]);
 
   const persistSnapshot = useCallback((snapshot: JournalEntries) => {
@@ -647,7 +648,10 @@ function App() {
                     {item.title ||
                       format(parseISO(item.date), "M月d日", { locale: zhCN })}
                   </strong>
-                  <small>{item.content.slice(0, 18) || "一篇安静的记录"}</small>
+                  <small>
+                    {journalPreviewText(item.content).slice(0, 18) ||
+                      "一篇安静的记录"}
+                  </small>
                 </span>
               </button>
             ))}

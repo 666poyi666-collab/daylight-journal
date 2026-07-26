@@ -2,7 +2,7 @@
 
 拾光是一个面向个人使用的跨端日记工作台：网页、Android 手机和平板共用一套日记数据，并通过 MCP 让 ChatGPT 在「日记」项目中完成复盘。
 
-当前阶段优先保证三件事：记录足够顺手、跨端同步可靠、AI 读取路径清晰。前端已完成 Editorial Paper 视觉重构，设计与响应式约束见 [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)。
+当前阶段优先保证三件事：记录足够顺手、跨端同步可靠、AI 读取路径清晰。前端视觉为 Ink & Daylight（暖纸墨色 + 单一赭金强调色 + 发丝线分层），设计与响应式约束见 [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)。
 
 ## 当前能力
 
@@ -83,7 +83,7 @@ Tunnel，MCP 不直接暴露公网，也不依赖 PersonalMcpGateway。安装、
 - [`docs/AI-CODING-GUIDE.md`](docs/AI-CODING-GUIDE.md)：AI coding 工作流、日志和验收规则
 - [`docs/BUGS.md`](docs/BUGS.md)：已知问题、修复记录与 Bug 模板
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md)：按版本维护的开发变更日志
-- [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)：Soft Tech 视觉方向与前端重构约束
+- [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)：Ink & Daylight 视觉方向与响应式约束
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)：阶段计划与暂不做事项
 
 ## 目录约定

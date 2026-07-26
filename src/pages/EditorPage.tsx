@@ -30,6 +30,7 @@ import {
   hasEntryContent,
   hasReviewableText,
   journalBlocksToContent,
+  journalPreviewText,
   type JournalBlock,
   type JournalEntry,
   type JournalTextColor,
@@ -448,7 +449,7 @@ export function EditorPage({
     return (
       <section className={`${compact ? 'entry-meta-compact' : 'side-card mood-card'}`}>
         <div className="card-title">
-          <span>今天感觉如何？</span>
+          <span>{compact ? '心情' : '今天感觉如何？'}</span>
           <small>{compact ? '可选' : '选择最接近的心情'}</small>
         </div>
         <div className="mood-row">
@@ -556,12 +557,6 @@ export function EditorPage({
             >
               <ChevronLeft />
             </button>
-            <div
-              className={`weather-glyph ${selectedDate === todayKey ? "is-today" : "is-past"}`}
-            >
-              <span className="ambient-orb" aria-hidden="true" />
-              <small>{selectedDate === todayKey ? "慢慢写" : "回看这天"}</small>
-            </div>
             <button
               onClick={() => onChangeDate(1)}
               aria-label="后一天"
@@ -742,7 +737,7 @@ export function EditorPage({
                 }}
                 aria-label={index === 0 ? '日记正文' : `日记正文第 ${index + 1} 段`}
                 placeholder={index === 0
-                  ? '此刻，你想记住什么？\n\n不必完整，也不用完美。写下发生的事、当时的感受，或者一个还没有答案的问题。'
+                  ? '此刻，你想记住什么？不必完整，也不用完美。'
                   : '继续写下这个时刻……'}
                 />
               ) : (
@@ -848,7 +843,8 @@ export function EditorPage({
                   <span>
                     <strong>{memory.title || '那一天的片段'}</strong>
                     <small>
-                      {memory.content.slice(0, 42) || '这一天留下了一张照片。'}
+                      {journalPreviewText(memory.content).slice(0, 42) ||
+                        '这一天留下了一张照片。'}
                     </small>
                   </span>
                   <ArrowUpRight />

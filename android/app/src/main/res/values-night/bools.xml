@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色启动底需要浅色状态栏图标 -->
+    <bool name="splash_light_status_bar">false</bool>
+</resources>

@@ -5,7 +5,44 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 前端整体重设计为 Ink & Daylight：暖纸背景配真实墨色正文，鼠尾草绿换成单一赭金强调色，
+  结构改由发丝线和留白建立，阴影只保留给抽屉、键盘工具条和拖动中的记录片。
+- 显示层改用"拉丁衬线先行"的混排字族（数字走 Georgia、汉字走宋体），正文放大到 16.5px /
+  行高 1.95，版心固定 680px；不引入任何在线字体。
+- 记录片改为左侧时间轴形态，排序、删除和字数工具默认隐藏、悬停或聚焦才出现，触屏端常驻；
+  空白记录片不再显示任何工具和字数。
+- 平板竖屏侧栏收成 74px 图标轨，正文与上下文栏保持双栏；手机端心情与标签压成两条窄行，
+  正文提前约 200px 进入首屏。
+- 专注写作改为用 `:has()` 收走侧栏与上下文栏，日期降为一行小字。
+- 心情五级改为一条冷→暖的真实色阶，日历改用格子侧边色条（手机端底部短横）而非整块染色。
+- 主题色统一为 `#f7f4ed` / `#131211`（`index.html`、manifest、运行时 meta 三处同步）。
+
+### Removed
+
+- 删除已不在级联中的 `App.css`、`editorial-ui.css`、`journal-reference.css`、
+  `performance.css`、`redesign.css`、`ui-v2.css`；运行时样式收敛为 `index.css` +
+  `journal-ui.css` 两个文件。
+- 移除日期区不承载信息的装饰元素（环境光球、天气字形）。
+
 ### Fixed
+
+- 侧栏最近记录被 flex 压缩后与底部"设置/深色模式"重叠，且侧栏本身无法滚动。
+- 抽屉关闭按钮在桌面和平板图标轨上仍然渲染，导致品牌行与图标轨横向溢出。
+- 平板竖横屏上下文栏内容溢出：心情行改用 `minmax(0, 1fr)`，窄栏隐藏提示语。
+- 平板横屏日期被挤成竖排。
+- 首屏空白记录片的占位文案被 `min-height` 截断。
+- 手机抽屉层级低于底部标签栏。
+- 列表与卡片预览会把记录片分隔符 `---` 当正文展示，统一改走 `journalPreviewText()`。
+- Android 15 edge-to-edge 下顶栏钻进状态栏：`env(safe-area-inset-*)` 改为在所有断点处理，
+  横屏时左右两侧的系统区域同样让出（真机 Redmi Note 11T Pro 复现）。
+- 横屏手机（895×393 CSS px）宽度落进平板区间、错误地拿到图标轨双栏布局：紧凑断点补上
+  `(orientation: landscape) and (max-height: 520px)`，`journal-ui.css` 与 `App.tsx` 同步。
+- 设置页状态圆点在窄屏被 flex 拉成椭圆，且三段信息换行错乱。
+- 正文聚焦时浏览器默认 focus ring 把书写区变成表单输入框：改为左侧 2px 赭金竖线 + 光标表达焦点。
+- Android 原生启动屏仍是旧墨绿 `#31483A`，冷启动会闪一下：改为 `#F7F4ED`，
+  新增 `values-night` 深色底与 `@bool/splash_light_status_bar` 跟随状态栏图标明暗。
 
 - 将 Journal Tunnel 健康端口从 Windows 保留范围内的 8987 迁移到 8887，并补齐 Secure MCP
   Tunnel doctor 所需的 HTTP MCP OAuth 发现元数据。
@@ -16,6 +53,11 @@
 - 服务验证将认证、LAN 隔离、单进程监听和敏感日志扫描改为失败即非零退出。
 
 ### Verified
+
+- 真实链路：新 UI 写入 → `/journal/sync` → 服务端落库 → MCP `journal_get_entry` /
+  `journal_list_recent` 读回 → 新设备拉取还原，浏览器控制台零错误。
+- 真机：Redmi Note 11T Pro（Android 15）经网络 ADB 安装调试包，竖屏、横屏、深色、抽屉、
+  输入法工具条与四个页面逐项走查通过。
 
 - 独立“拾光日记”ChatGPT 应用完成真实状态、列表、Resource、元数据写入、同请求重放和
   MCP 重启后重放；revision 未在重放时再次增加。

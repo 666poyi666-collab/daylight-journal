@@ -10,7 +10,11 @@ import {
   startOfMonth,
   startOfWeek,
 } from 'date-fns'
-import { hasEntryContent, type JournalEntries } from '../journal/model.ts'
+import {
+  hasEntryContent,
+  journalPreviewText,
+  type JournalEntries,
+} from '../journal/model.ts'
 import { journalMoods } from '../journal/moods.ts'
 
 type CalendarPageProps = {
@@ -106,7 +110,8 @@ export function CalendarPage({
                 {hasEntry && (
                   <>
                     <span>
-                      {entries[key].title || entries[key].content.slice(0, 16)}
+                      {entries[key].title ||
+                        journalPreviewText(entries[key].content).slice(0, 16)}
                     </span>
                     <i />
                   </>
