@@ -539,6 +539,11 @@ export function EditorPage({
   return (
     <div className={`editor-layout ${focusMode ? "focus-mode" : ""}`}>
       <section className="writing-column">
+        <div className="page-sheet">
+        <span className="date-folio" aria-hidden="true">
+          {format(parseISO(selectedDate), 'd')}
+        </span>
+        <span className="page-ribbon" aria-hidden="true" />
         <div className="date-heading">
           <div>
             <p>{format(parseISO(selectedDate), "EEEE", { locale: zhCN })}</p>
@@ -824,6 +829,7 @@ export function EditorPage({
             </div>,
             document.body,
           )}
+        </div>
       </section>
 
       <aside className="insight-column">

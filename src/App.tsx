@@ -772,18 +772,16 @@ function App() {
                 className={
                   item.date === selectedDate && view === "today" ? "active" : ""
                 }
+                title={journalPreviewText(item.content).slice(0, 40) || undefined}
               >
-                <span className="recent-dot" />
-                <span>
-                  <strong>
-                    {item.title ||
-                      format(parseISO(item.date), "M月d日", { locale: zhCN })}
-                  </strong>
-                  <small>
-                    {journalPreviewText(item.content).slice(0, 18) ||
-                      "一篇安静的记录"}
-                  </small>
-                </span>
+                <strong>
+                  {item.title ||
+                    format(parseISO(item.date), "M月d日", { locale: zhCN })}
+                </strong>
+                <i className="toc-leader" aria-hidden="true" />
+                <time dateTime={item.date}>
+                  {format(parseISO(item.date), "M/d")}
+                </time>
               </button>
             ))}
             {sortedEntries.length === 0 && (

@@ -309,8 +309,9 @@
   position: relative;
   font-weight: 600;
   color: var(--ink);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--rule);
+  background: var(--surface-hover);
+  box-shadow: inset 2px 0 0 0 var(--accent);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
 }
 
 .primary-nav > button.active .nav-icon-frame,
@@ -340,34 +341,16 @@
   margin-top: 4px;
 }
 
+/* 目录式条目：标题 …点线… 日期，一本书的目次页 */
 .recent-list > button {
-  gap: 9px;
-  padding: 8px 10px;
-  align-items: flex-start;
-}
-
-.recent-dot {
-  flex: 0 0 auto;
-  width: 5px;
-  height: 5px;
-  margin-top: 7px;
-  border-radius: 50%;
-  background: var(--rule-strong);
-  transition: background var(--t-fast) var(--ease);
-}
-
-.recent-list > button:hover .recent-dot,
-.recent-list > button.active .recent-dot {
-  background: var(--accent);
-}
-
-.recent-list > button > span:last-child {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
+  gap: 8px;
+  padding: 7px 10px;
+  align-items: baseline;
 }
 
 .recent-list strong {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   font-size: var(--t-small);
   font-weight: 500;
@@ -376,22 +359,34 @@
   white-space: nowrap;
 }
 
-.recent-list small {
-  overflow: hidden;
+.toc-leader {
+  flex: 1 0 12px;
+  align-self: center;
+  border-bottom: 1px dotted var(--rule-strong);
+  transform: translateY(2px);
+}
+
+.recent-list time {
+  flex: 0 0 auto;
+  font-family: var(--font-display);
   font-size: var(--t-micro);
+  font-variant-numeric: tabular-nums;
   color: var(--ink-4);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .recent-list > button.active {
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--rule);
+  box-shadow: inset 2px 0 0 0 var(--accent);
+  background: var(--surface-hover);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
 }
 
 .recent-list > button.active strong {
   font-weight: 600;
   color: var(--ink);
+}
+
+.recent-list > button.active time {
+  color: var(--accent);
 }
 
 .sidebar-empty {
@@ -658,34 +653,97 @@
    4. 编辑器
    ══════════════════════════════════════════════════════════════ */
 
+/*
+ * 「一页」：编辑器不再是全出血的表单，而是深色桌面上的一张纸。
+ * 页面（.page-sheet）是全屏唯一的亮面物体；上下文栏退成页边注记，
+ * AI 复盘保持唯一的深色面板，作为视觉终点。
+ */
 .editor-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 322px;
+  grid-template-columns: minmax(0, 1fr) 308px;
   height: 100%;
+  background: var(--paper-deep);
 }
 
 .writing-column {
   min-width: 0;
-  padding: 34px max(44px, env(safe-area-inset-right)) 96px
-    max(44px, env(safe-area-inset-left));
+  padding: 30px max(36px, env(safe-area-inset-right)) 88px
+    max(36px, env(safe-area-inset-left));
   overflow-y: auto;
   overscroll-behavior-y: contain;
 }
 
-.writing-column > * {
-  max-width: var(--measure);
-  margin-inline: auto;
+/* 纸张本体：真实的页缘投影 + 底下若隐若现的第二页纸口 */
+.page-sheet {
+  position: relative;
+  max-width: calc(var(--measure) + 96px);
+  margin: 0 auto;
+  padding: 40px 48px 46px;
+  overflow: hidden;
+  background: var(--surface);
+  border-radius: 3px;
+  box-shadow:
+    0 1px 2px rgba(31, 25, 12, 0.05),
+    0 18px 48px rgba(31, 25, 12, 0.1),
+    0 3px 0 -1px var(--surface),
+    0 4px 0 -1px var(--rule-strong);
 }
 
+:root[data-theme='dark'] .page-sheet {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 18px 48px rgba(0, 0, 0, 0.45),
+    0 3px 0 -1px var(--surface),
+    0 4px 0 -1px var(--rule-strong);
+}
+
+/* 浮水页码沉底、丝带浮顶，其余内容压在页码之上 */
+.page-sheet > :not(.date-folio):not(.page-ribbon) {
+  position: relative;
+  z-index: 1;
+}
+
+/* 书签丝带：从页顶垂下的一小段赭金 */
+.page-ribbon {
+  position: absolute;
+  top: 0;
+  right: 44px;
+  z-index: 2;
+  width: 7px;
+  height: 42px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 5px), 0 100%);
+  opacity: 0.9;
+}
+
+/* 浮水页码：当天的日号以极淡的巨大衬线印在页面右上，杂志开篇的比例感 */
+.date-folio {
+  position: absolute;
+  top: -0.15em;
+  right: 18px;
+  z-index: 0;
+  font-family: var(--font-display);
+  font-size: clamp(150px, 19vw, 230px);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: color-mix(in srgb, var(--accent) 11%, transparent);
+  pointer-events: none;
+  user-select: none;
+}
+
+:root[data-theme='dark'] .date-folio {
+  color: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+/* 页边注记：上下文栏不再是一摞卡片 */
 .insight-column {
   display: grid;
   align-content: start;
-  gap: 16px;
-  padding: 26px max(22px, env(safe-area-inset-right)) 72px 22px;
+  gap: 22px;
+  padding: 34px max(24px, env(safe-area-inset-right)) 72px 6px;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  background: var(--paper-deep);
-  border-left: 1px solid var(--rule);
 }
 
 /* ── 日期标题 ──────────────────────────────── */
@@ -1294,7 +1352,9 @@
 }
 
 .editor-layout.focus-mode .insight-column,
-.editor-layout.focus-mode .mobile-entry-meta {
+.editor-layout.focus-mode .mobile-entry-meta,
+.editor-layout.focus-mode .date-folio,
+.editor-layout.focus-mode .page-ribbon {
   display: none;
 }
 
@@ -1322,7 +1382,11 @@
    ══════════════════════════════════════════════════════════════ */
 
 .side-card,
-.memory-card,
+.memory-card {
+  padding: 0;
+  background: transparent;
+}
+
 .ai-card {
   padding: 16px 16px 17px;
   background: var(--surface);
@@ -1332,7 +1396,7 @@
 
 .desktop-entry-meta {
   display: grid;
-  gap: 16px;
+  gap: 22px;
 }
 
 /* 紧凑端才把心情与标签提到正文之前 */
@@ -1352,7 +1416,9 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 10px;
-  margin-bottom: 13px;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .card-title > span,
@@ -1361,9 +1427,10 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: var(--t-body);
+  font-size: var(--t-micro);
   font-weight: 600;
-  color: var(--ink);
+  letter-spacing: 0.14em;
+  color: var(--ink-2);
 }
 
 /* 副标题只是提示语，栏宽不够时第一个让位 */
@@ -2990,17 +3057,25 @@
   }
 
   .editor-layout {
-    grid-template-columns: minmax(0, 1fr) 274px;
+    grid-template-columns: minmax(0, 1fr) 264px;
   }
 
   .writing-column {
-    padding: 24px max(28px, env(safe-area-inset-right)) 88px
-      max(28px, env(safe-area-inset-left));
+    padding: 22px max(22px, env(safe-area-inset-right)) 80px
+      max(22px, env(safe-area-inset-left));
+  }
+
+  .page-sheet {
+    padding: 32px 34px 38px;
+  }
+
+  .date-folio {
+    font-size: 160px;
   }
 
   .insight-column {
-    padding: 20px max(16px, env(safe-area-inset-right)) 64px 16px;
-    gap: 13px;
+    padding: 26px max(18px, env(safe-area-inset-right)) 64px 4px;
+    gap: 18px;
   }
 
   .date-heading {
@@ -3091,17 +3166,25 @@
   }
 
   .editor-layout {
-    grid-template-columns: minmax(0, 1fr) 252px;
+    grid-template-columns: minmax(0, 1fr) 240px;
   }
 
   .writing-column {
-    padding: 24px max(24px, env(safe-area-inset-right)) 88px
-      max(24px, env(safe-area-inset-left));
+    padding: 18px max(14px, env(safe-area-inset-right)) 80px
+      max(14px, env(safe-area-inset-left));
+  }
+
+  .page-sheet {
+    padding: 28px 26px 32px;
+  }
+
+  .date-folio {
+    font-size: 130px;
   }
 
   .insight-column {
-    gap: 12px;
-    padding: 18px max(14px, env(safe-area-inset-right)) 64px 14px;
+    gap: 16px;
+    padding: 22px max(16px, env(safe-area-inset-right)) 64px 2px;
   }
 
   .date-heading h1 {
@@ -3230,12 +3313,23 @@
   }
 
   .writing-column {
-    padding: 20px max(16px, env(safe-area-inset-right)) 24px
-      max(16px, env(safe-area-inset-left));
+    padding: 14px max(10px, env(safe-area-inset-right)) 26px
+      max(10px, env(safe-area-inset-left));
   }
 
-  .writing-column > * {
+  .page-sheet {
     max-width: none;
+    padding: 24px 18px 28px;
+  }
+
+  .page-ribbon {
+    right: 22px;
+    height: 34px;
+  }
+
+  .date-folio {
+    right: 8px;
+    font-size: 120px;
   }
 
   .insight-column {
@@ -3289,7 +3383,9 @@
 
   .entry-meta-compact > .card-title {
     grid-column: 1;
+    padding-bottom: 0;
     margin: 0;
+    border-bottom: 0;
   }
 
   .entry-meta-compact > :not(.card-title) {
