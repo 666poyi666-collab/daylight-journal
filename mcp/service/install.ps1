@@ -35,6 +35,15 @@ function Wait-Ready([int]$TimeoutSeconds = 45) {
     throw 'PoyiJournalMcp did not become ready.'
 }
 
+function Invoke-Icacls([string[]]$ArgumentList) {
+    # icacls reports per-object failures on stderr; under the Stop preference a
+    # redirected stderr line becomes terminating and aborts the install midway,
+    # so run with Continue and let callers judge the exit code instead.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & icacls @ArgumentList 2>&1 | Out-Null } finally { $ErrorActionPreference = $previous }
+}
+
 function Wait-TunnelReady([int]$TimeoutSeconds = 45) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
@@ -129,17 +138,27 @@ $serviceSid = 'NT SERVICE\PoyiJournalMcp'
 $auditDir = Join-Path $resolvedData 'logs'
 $serviceLogDir = Join-Path $resolvedData 'service-logs\mcp'
 New-Item -ItemType Directory -Path $auditDir, $serviceLogDir -Force | Out-Null
-& icacls $resolvedInstall /grant:r "$serviceSid`:RX" /T /C | Out-Null
+Invoke-Icacls @($resolvedInstall, '/grant:r', "$serviceSid`:RX", '/T', '/C')
 if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal installation ACLs.' }
-& icacls $resolvedInstall /grant:r "$serviceSid`:(OI)(CI)RX" | Out-Null
+Invoke-Icacls @($resolvedInstall, '/grant:r', "$serviceSid`:(OI)(CI)RX")
 if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal installation inheritance.' }
 
 # Existing files need direct ACEs; propagation flags only govern future children.
-& icacls $resolvedData /inheritance:r /grant:r 'BUILTIN\Administrators:F' `
-    "$serviceSid`:M" /T /C | Out-Null
+# The recursive grant must skip Tunnel-owned objects: its WinSW log stays locked
+# while the Tunnel service runs, and the DPAPI runtime key must never carry a
+# Journal MCP ACE.
+Invoke-Icacls @($resolvedData, '/inheritance:r', '/grant:r', 'BUILTIN\Administrators:F', "$serviceSid`:M")
 if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal data ACLs.' }
-& icacls $resolvedData /grant:r 'BUILTIN\Administrators:(OI)(CI)F' `
-    "$serviceSid`:(OI)(CI)M" | Out-Null
+$dataTargets = @(
+    Get-ChildItem -LiteralPath $resolvedData -Force |
+        Where-Object { $_.Name -ne 'service-logs' -and $_.Name -ne 'tunnel-runtime-key.dpapi' } |
+        ForEach-Object { $_.FullName }
+) + @($serviceLogDir)
+foreach ($dataTarget in $dataTargets) {
+    Invoke-Icacls @($dataTarget, '/grant:r', 'BUILTIN\Administrators:F', "$serviceSid`:M", '/T', '/C')
+    if ($LASTEXITCODE -ne 0) { throw "Failed to configure Journal data ACLs for $dataTarget." }
+}
+Invoke-Icacls @($resolvedData, '/grant:r', 'BUILTIN\Administrators:(OI)(CI)F', "$serviceSid`:(OI)(CI)M")
 if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal data ACLs.' }
 
 $firewallRule = Get-NetFirewallRule -Name 'PoyiJournalSyncApi' -ErrorAction SilentlyContinue

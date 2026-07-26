@@ -74,6 +74,9 @@
   复盘只依据列表摘要的问题。
 - MCP 升级脚本在 Windows 自动停止依赖 Tunnel 后恢复其原运行状态，并等待 Tunnel ready。
 - 服务验证将认证、LAN 隔离、单进程监听和敏感日志扫描改为失败即非零退出。
+- MCP 升级脚本的数据 ACL 遍历踩到运行中 Tunnel 锁定的日志文件即中断、服务装而未启
+  （假活）：icacls 改为按退出码判定且不再被 stderr 终止，遍历排除 Tunnel 日志与
+  DPAPI 密钥，并取消对 Tunnel 密钥的 MCP ACE。
 
 ### Verified
 
