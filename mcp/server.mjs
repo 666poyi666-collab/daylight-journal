@@ -57,6 +57,23 @@ function registerOAuthDiscoveryRoutes(app) {
   })
 }
 
+function registerJsonErrorHandler(app) {
+  // Express 5's fallback handler echoes the full stack (with install paths)
+  // to the client; keep body-parser and route failures to fixed JSON shapes.
+  app.use((error, _req, res, _next) => {
+    if (res.headersSent) return
+    const clientFault = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
+    res.status(clientFault ? error.status : 500).json({
+      error: {
+        code: clientFault ? 'INVALID_REQUEST' : 'INTERNAL',
+        message: clientFault ? 'Request body is invalid' : 'Journal internal error',
+        retryable: !clientFault,
+        details: {},
+      },
+    })
+  })
+}
+
 function registerBusinessRoutes(app, store, apiToken) {
   app.use('/v1', createJournalApiRouter(store, apiToken))
   app.use('/journal', createBearerAuth(apiToken))
@@ -72,6 +89,7 @@ export function createJournalSyncApp(store, apiToken) {
   configureHttpApp(app)
   app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'Journal Sync API' }))
   registerBusinessRoutes(app, store, apiToken)
+  registerJsonErrorHandler(app)
   return app
 }
 
@@ -127,6 +145,7 @@ export async function createJournalApp(settings = getSettings()) {
   })
   app.get('/mcp', (_req, res) => res.status(405).json({ error: 'Use POST for MCP requests' }))
   app.delete('/mcp', (_req, res) => res.status(405).json({ error: 'Stateless MCP sessions cannot be deleted' }))
+  registerJsonErrorHandler(app)
 
   return { app, store, audit, health, apiToken, settings }
 }

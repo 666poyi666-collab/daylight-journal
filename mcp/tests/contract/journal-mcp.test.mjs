@@ -116,6 +116,16 @@ test('Journal MCP exposes namespaced tools, Resources, writes, and content-safe 
 
     const resource = await rpc(baseUrl, 6, 'resources/read', { uri: 'journal://entries/2026-07-26' })
     assert.match(resource.result.contents[0].text, new RegExp(marker))
+
+    const malformed = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: '{bad',
+    })
+    assert.equal(malformed.status, 400)
+    const malformedBody = await malformed.text()
+    assert.doesNotMatch(malformedBody, /SyntaxError|node_modules|<pre>/)
+    assert.match(malformedBody, /INVALID_REQUEST/)
     const audit = await fs.readFile(auditFile, 'utf8')
     assert.doesNotMatch(audit, new RegExp(marker))
     assert.doesNotMatch(audit, /MCP contract/)

@@ -80,6 +80,8 @@
 - WinNAT 动态排除端口段漂移吞掉 8780/8781，特权 bind 静默黑洞、服务长期假活：
   安装脚本以管理员保留段固定 Journal 端口（MCP 8780/8781、Tunnel 8887），
   verify 前置检测动态排除命中；新增 `JOURNAL_TRACE` 启动阶段打点常开进服务日志。
+- 坏 JSON 请求会拿到 Express 默认 HTML 错误页（含堆栈与安装路径）：两个 HTTP app
+  统一 JSON 错误处理器，4xx/5xx 固定结构化文案，不再透出内部信息。
 
 ### Verified
 
