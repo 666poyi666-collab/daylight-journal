@@ -98,6 +98,20 @@ function safeHttpUrl(value: string): string | null {
   }
 }
 
+type SyncIssue = 'unpaired' | 'auth' | 'server' | 'network'
+
+/** 把同步失败归类，供状态栏给出可行动的提示：未配对/令牌被拒引导去设置页。 */
+function classifySyncIssue(error: unknown): SyncIssue {
+  const message = error instanceof Error ? error.message : ''
+  const status = /failed: (\d+)/.exec(message)?.[1]
+  if (status === '401' || status === '403') return 'auth'
+  if (status) return 'server'
+  const paired = Boolean(
+    import.meta.env.VITE_JOURNAL_API_URL || readStorageValue(JOURNAL_API_URL_KEY),
+  )
+  return paired ? 'network' : 'unpaired'
+}
+
 const navItems = [
   { id: 'today' as View, label: '今日', icon: NotebookPen },
   { id: 'calendar' as View, label: '日历', icon: CalendarRange },
@@ -149,6 +163,7 @@ function App() {
     initialLoad.issue,
   )
   const [syncState, setSyncState] = useState<SyncState>('syncing')
+  const [syncIssue, setSyncIssue] = useState<SyncIssue | null>(null)
   const [journalApiUrl, setJournalApiUrl] = useState(DEFAULT_JOURNAL_API)
   const [journalApiToken, setJournalApiToken] = useState(
     () => readStorageValue(JOURNAL_API_TOKEN_KEY) || '',
@@ -379,7 +394,10 @@ function App() {
             if (revision >= syncedRevisionRef.current) {
               syncedRevisionRef.current = revision
             }
-            if (revision === revisionRef.current) setSyncState('synced')
+            if (revision === revisionRef.current) {
+              setSyncState('synced')
+              setSyncIssue(null)
+            }
             return true
           }
           try {
@@ -398,10 +416,16 @@ function App() {
               syncedRevisionRef.current,
               revision,
             )
-            if (revision === revisionRef.current) setSyncState('synced')
+            if (revision === revisionRef.current) {
+              setSyncState('synced')
+              setSyncIssue(null)
+            }
             return true
-          } catch {
-            if (revision === revisionRef.current) setSyncState('offline')
+          } catch (error) {
+            if (revision === revisionRef.current) {
+              setSyncState('offline')
+              setSyncIssue(classifySyncIssue(error))
+            }
             return false
           }
         })
@@ -448,8 +472,9 @@ function App() {
         if (!persisted.ok) setSaveState('error')
         else setSaveState('saved')
         return await flushLatestEntries()
-      } catch {
+      } catch (error) {
         setSyncState('offline')
+        setSyncIssue(classifySyncIssue(error))
         return false
       }
     })()
@@ -853,15 +878,35 @@ function App() {
                         : "尚未保存到本机 · 请检查存储空间"}
                   </small>
                 ) : syncState === "offline" && saveState !== "saving" ? (
-                  <button
-                    className="sync-status offline retryable"
-                    onClick={() => void synchronize()}
-                    aria-live="polite"
-                    aria-label="重试同步"
-                    title="点击重试同步"
-                  >
-                    已保存到本机 · 点击重试
-                  </button>
+                  syncIssue === "unpaired" || syncIssue === "auth" ? (
+                    <button
+                      className="sync-status offline retryable"
+                      onClick={() => setView("settings")}
+                      aria-live="polite"
+                      aria-label="前往设置页配对同步服务"
+                      title="前往设置页配对同步服务"
+                    >
+                      {syncIssue === "auth"
+                        ? "配对令牌被拒 · 去设置配对"
+                        : "未配对同步服务 · 去设置配对"}
+                    </button>
+                  ) : (
+                    <button
+                      className="sync-status offline retryable"
+                      onClick={() => void synchronize()}
+                      aria-live="polite"
+                      aria-label="重试同步"
+                      title={
+                        syncIssue === "server"
+                          ? "同步服务返回异常，点击重试"
+                          : "点击重试同步"
+                      }
+                    >
+                      {syncIssue === "server"
+                        ? "同步服务异常 · 点击重试"
+                        : "已保存到本机 · 点击重试"}
+                    </button>
+                  )
                 ) : (
                   <small
                     className={`sync-status ${saveState === "saving" ? "saving" : syncState}`}

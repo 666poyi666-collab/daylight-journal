@@ -37,6 +37,7 @@
 | BUG-018 | 2026-07 | MCP 升级脚本对数据根 `/T` 遍历踩到运行中 Tunnel 锁定的 WinSW 日志，icacls 的 stderr 在 Stop 模式下中断安装，服务被重装但从未启动（假活：服务 RUNNING、端口无监听） | icacls 改经 `Invoke-Icacls` 以 Continue 执行并按退出码判定；数据 ACL 遍历排除 `service-logs`（单独授 `service-logs\mcp`）与 `tunnel-runtime-key.dpapi`，顺带取消对 Tunnel DPAPI 密钥的 MCP ACE；服务资产测试锁定新断言，提权重装 ACL 步骤全程通过 |
 | BUG-019 | 2026-07 | WinNAT 动态排除端口段漂移到 8757–8856 吞掉 8780/8781：特权进程 bind“成功”但无监听、netstat 无条目、loopback 连接被拒，服务持续假活并被误判为启动卡死；同机普通用户 bind 直接 EACCES | `JOURNAL_TRACE` 打点证实进程各启动阶段全部健康、监听回调已触发，`netsh` 确认动态排除段覆盖；两个安装脚本以管理员保留段固定 8780/8781 与 8887（动态段冲突时临时重启 winnat），verify 前置检测动态排除命中即失败；重装后 readyz/metrics/LAN、verify 退出 0、Tunnel ready、部署冒烟与分页契约现场验证全部通过 |
 | BUG-020 | 2026-07 | 坏 JSON 请求触发 Express 5 默认错误页，完整堆栈与安装路径以 HTML 回给客户端（8780/8781 均可触发，堆栈同时进服务 err 日志） | MCP 与 LAN app 统一注册 JSON 错误处理器：4xx 固定 `INVALID_REQUEST`、5xx 固定 `INTERNAL`，不透出堆栈；契约测试断言 400 响应不含 SyntaxError/node_modules/HTML |
+| BUG-021 | 2026-07 | 手机 App 未配对时同步地址回落到手机自身 `127.0.0.1:8780`，fetch 瞬时失败且无原因提示，“点击重试”体感无反应 | 同步失败分类为未配对/令牌被拒/服务异常/网络四类；未配对与令牌被拒时状态栏按钮改为直接引导去设置页配对；build/lint/单测/前端 E2E 通过，待随下次 APK 构建到真机复验 |
 
 ## 新 Bug 模板
 
