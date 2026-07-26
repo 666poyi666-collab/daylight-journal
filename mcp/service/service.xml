@@ -1,0 +1,29 @@
+<service>
+  <id>PoyiJournalMcp</id>
+  <name>Poyi Journal MCP</name>
+  <description>Independent Journal MCP Server for the Journal application.</description>
+  <executable>%NODE_EXE%</executable>
+  <arguments>&quot;%BASE%\mcp\main.mjs&quot;</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <env name="JOURNAL_DATA_DIR" value="%JOURNAL_DATA_DIR%" />
+  <env name="JOURNAL_MCP_HOST" value="127.0.0.1" />
+  <env name="JOURNAL_MCP_PORT" value="8780" />
+  <env name="JOURNAL_SYNC_HOST" value="0.0.0.0" />
+  <env name="JOURNAL_SYNC_PORT" value="8781" />
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <stoptimeout>20sec</stoptimeout>
+  <onfailure action="restart" delay="5 sec" />
+  <onfailure action="restart" delay="15 sec" />
+  <onfailure action="restart" delay="60 sec" />
+  <resetfailure>1 hour</resetfailure>
+  <logpath>%JOURNAL_DATA_DIR%\service-logs\mcp</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+  <serviceaccount>
+    <domain>NT SERVICE</domain>
+    <user>PoyiJournalMcp</user>
+  </serviceaccount>
+</service>

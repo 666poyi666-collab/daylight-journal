@@ -1,45 +1,65 @@
-# 同步与 MCP
+# 同步与 MCP 协议
 
-## REST 接口
+## 数据与兼容同步
 
-- `GET /journal/all`：读取完整日期映射
-- `POST /journal/sync`：接收日记数组，在串行写入队列中按 `updatedAt` 合并后写入 `data/journals.json`；旧修订不能覆盖同日期的新修订
-- `GET /health`：服务探活
+- `GET /journal/all`：为现有 Web/Android 客户端返回完整日期映射。
+- `POST /journal/sync`：串行合并客户端副本；较旧 `updatedAt` 不覆盖新版本，并推进整数 revision。
+- `GET /health`：旧客户端兼容探活。运维探活使用 `/healthz` 和 `/readyz`。
 
-当前服务未启用 token（个人环境、用户明确接受该取舍）。如果部署到公开环境，必须设置 `MCP_TOKEN` 并让同步客户端带上认证头。
+客户端仍是 localStorage 本地优先，服务端 JSON 是跨端副本。跨设备同时编辑同一天仍按
+整日 `updatedAt` 合并，不宣称 block 级无冲突协作。
 
-日记可以带一张前端压缩后的 `coverImage`，同步服务将请求体上限设为 4 MB。schema v2 还会同步有序 `blocks`、每片的 `writeTimes`、`writeStops` 和可选 `textColor`；旧版 `content` 作为展平镜像继续随记录同步。停笔偏移与文字颜色只影响客户端显示，不进入 MCP 复盘正文。
+## 版本化业务 API
 
-MCP 文本工具不会返回图片 data URL，只返回 `hasImage`。对于 schema v2，按记录片返回正文和写作时间，不再同时返回重复的展平 `content`，避免复盘上下文重复。
+服务监听 `127.0.0.1:8780`，提供：
 
-当前同步仍按整日 `updatedAt` 执行 last-write-wins，并未宣称 block 级实时合并；跨设备同时编辑同一天的冲突治理需要后续加入 block tombstone 与排序冲突协议。
+- `GET /v1/status`、`GET /v1/health`、`GET /v1/capabilities`
+- `GET /v1/entries`、`GET /v1/entries/:date`
+- `POST /v1/entries`
+- `POST /v1/entries/:date/append`
+- `PATCH /v1/entries/:date`
 
-自动化测试通过 `JOURNAL_DATA_DIR` 指向系统临时目录，避免接口回归写入真实日记副本。生产运行不设置该变量时仍使用仓库下的 `data/`。
+`/v1/*` 必须使用 `Authorization: Bearer <random-token>`。token 自动生成在运行数据目录，
+不进入 Git、APK、前端变量或日志。所有写入都要求 UUID `requestId` 和非负整数
+`expectedRevision`；相同 requestId/载荷返回持久化结果重放，载荷不同返回
+`REQUEST_ID_REUSED`，revision 不符返回 `REVISION_CONFLICT`。
 
-## MCP 工具
+安装版同时在 `0.0.0.0:8781` 提供相同的认证业务 API和兼容同步接口，防火墙限定
+Private profile 与 LocalSubnet。它通过 `_poyi-journal._tcp.local` 发布稳定 serviceId、
+端口和 API 版本，不发布 token，也不提供 `/mcp`。手机/平板在设置页保存 `.local`
+地址与配对令牌，不依赖 ADB 或固定 IP。
 
-- `get_today_journal(date?)`
-- `get_journal_by_date(date)`
-- `list_recent_journals(limit?)`
+Journal 没有开始/暂停/停止一类控制命令，故 `commandId`、`expectedState`、`expiresAt`
+不适用；`/v1/capabilities` 中 `controlCommands` 固定为空数组。
 
-三个工具均为只读。MCP 服务同时提供新版 `/mcp` 与兼容 `/sse`/`/messages`，以适配不同 ChatGPT 连接器版本。
+## 独立 MCP
 
-## ChatGPT 使用方式
+MCP endpoint 为 `http://127.0.0.1:8780/mcp`，使用 Streamable HTTP。工具：
 
-1. 在 ChatGPT 插件/连接器设置中安装「拾光日记」。
-2. URL 填写当前公网 MCP 地址的 `/mcp`。
-3. 身份验证选择「未授权」（个人本地服务）。
-4. 在「日记」项目的聊天中，从“添加文件等”菜单选择「拾光日记」。
-5. 第一次调用时选择“始终允许”，可勾选记住本次对话答案。
+- `journal_get_status`
+- `journal_list_recent`
+- `journal_search`
+- `journal_get_entry`
+- `journal_create_entry`
+- `journal_append_entry`
+- `journal_update_entry`
 
-应用不会调用 OpenAI API，也不会依赖 Edge 桥接来完成默认复盘；复盘由 ChatGPT 网页端在项目内完成。
+完整正文 Resource：`journal://entries/{date}`。
 
-## 运行检查
+列表、搜索和读取工具返回元数据、短摘要与 Resource URI；完整/长正文由 Resource 返回。
+写工具必须显式提供 requestId 和 expectedRevision。审计日志只允许时间、事件、请求 ID、
+工具/Resource 名、耗时、结果和错误码，禁止正文、标题、标签、图片和任何令牌。
 
-```powershell
-curl.exe -s http://127.0.0.1:3001/health
-curl.exe -s https://<当前隧道域名>/health
-Get-Content .\data\journals.json
+## ChatGPT 链路
+
+```text
+ChatGPT 拾光日记应用
+→ journal-tunnel（独立固定 tunnel_id）
+→ PoyiJournalTunnel
+→ 127.0.0.1:8780/mcp
+→ PoyiJournalMcp / JournalStore
 ```
 
-Quick Tunnel 地址不是永久地址。长期使用前应换成固定 Cloudflare Tunnel 或域名，并把客户端地址移到可编辑配置中。
+Journal 不接入 PersonalMcpGateway，不与 Watch、Foxlink、Music 共用 MCP Server、Tunnel、
+profile、端口、数据或日志。MCP 不直接暴露公网。具体安装与真实调用验收见
+`MCP-OPERATIONS.md`。

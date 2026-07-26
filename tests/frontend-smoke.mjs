@@ -161,6 +161,27 @@ try {
       path: path.join(artifactDir, 'desktop-dark.png'),
       fullPage: true,
     })
+    await page.locator('#journal-navigation')
+      .getByRole('button', { name: '设置', exact: true })
+      .click()
+    await page.getByLabel('Journal 同步服务地址').fill('http://journal-host.local:8780')
+    await page.getByLabel('Journal 同步服务配对令牌')
+      .fill('test-only-pairing-token-000000000000')
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    assert.deepEqual(
+      await page.evaluate(() => ({
+        url: localStorage.getItem('daylight-journal-api'),
+        token: localStorage.getItem('daylight-journal-api-token'),
+      })),
+      {
+        url: 'http://journal-host.local:8780',
+        token: 'test-only-pairing-token-000000000000',
+      },
+    )
+    await page.screenshot({
+      path: path.join(artifactDir, 'desktop-settings.png'),
+      fullPage: true,
+    })
     assert.deepEqual(errors, [])
     await context.close()
   }

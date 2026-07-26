@@ -9,10 +9,22 @@
 
 - 建立用户需求基线、开发与发布手册、Bug/风险台账和版本日志。
 - 增加公开仓库的隐私与发布检查规则。
+- 增加独立 `PoyiJournalMcp`、版本化业务 API、7 个 Journal 工具和完整正文 Resource。
+- 增加持久化 requestId 重放、整数 revision 冲突、原子 JSON 写入和错误映射。
+- 增加独立 `PoyiJournalTunnel`、DPAPI 密钥、WinSW 服务模板、健康指标和 CI。
+- 增加 8781 认证 LAN API、mDNS 稳定 serviceId 发布、Private/LocalSubnet 防火墙规则和客户端配对设置。
 
 ### Changed
 
 - 公开构建不再内置个人 Quick Tunnel 与 ChatGPT 项目标识；改用安全默认值和构建变量。
+- 默认本地服务端口从 3001 调整为 Journal 专用 8780；旧同步接口保持兼容。
+- MCP 审计改为字段白名单，日记正文、标题、标签、图片和令牌不进入日志。
+- 兼容同步接口改为强制 Bearer，LAN listener 明确不暴露 MCP。
+
+### Fixed
+
+- 修复 WinSW XML 路径写入和已有文件 ACL 继承导致的 Windows 服务安装/readiness 失败。
+- 修复包装器异常退出遗留 Journal Node 子进程造成的 split listener。
 
 ## [1.0.0-debug] - 2026-07-25
 

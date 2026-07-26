@@ -10,7 +10,7 @@
 - 自动保存到本地 localStorage
 - 手机、平板、网页通过同步服务合并日记
 - ChatGPT 自定义连接器「拾光日记」
-- 三个只读 MCP 工具：`get_today_journal`、`get_journal_by_date`、`list_recent_journals`
+- 独立 Journal MCP：7 个 `journal_*` 工具和按日期读取完整正文的 Resource
 - 点击 AI 复盘时固定打开 ChatGPT「日记」项目，并复制复盘提示词
 - Markdown 导出，方便后续进入 Obsidian
 
@@ -37,7 +37,7 @@ npm run build
 ```
 
 公开构建不会内置个人 Tunnel 或 ChatGPT 项目标识。未配置时，同步服务默认连接
-`http://127.0.0.1:3001`，ChatGPT 入口默认打开首页。
+`http://127.0.0.1:8780`，ChatGPT 入口默认打开首页。
 
 Android：
 
@@ -60,12 +60,16 @@ release 签名和版本号。
 npm run mcp
 ```
 
-本地同步接口：`http://127.0.0.1:3001/journal/*`
+桌面本地同步接口：`http://127.0.0.1:8780/journal/*`
 
-MCP 接口：`http://127.0.0.1:3001/mcp`
+手机/平板同步：通过设置页保存 mDNS 地址（`http://<host>.local:8781`）和独立配对令牌；
+LAN listener 不提供 `/mcp`，不依赖 ADB 或固定 IP。
 
-公网连接器可使用 Cloudflare Tunnel。Quick Tunnel 重启后地址可能改变，应通过
-`VITE_JOURNAL_API_URL` 在构建时注入，禁止把个人临时地址提交到仓库。
+MCP 接口：`http://127.0.0.1:8780/mcp`
+
+ChatGPT 通过项目独立的 `PoyiJournalTunnel` 访问 MCP。Tunnel 是只出站的 Secure MCP
+Tunnel，MCP 不直接暴露公网，也不依赖 PersonalMcpGateway。安装、密钥和验收流程见
+[`docs/MCP-OPERATIONS.md`](docs/MCP-OPERATIONS.md)。
 
 ## 文档入口
 
@@ -75,6 +79,7 @@ MCP 接口：`http://127.0.0.1:3001/mcp`
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：代码、数据与端到端架构
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)：本地开发、测试与发布流程
 - [`docs/SYNC-MCP.md`](docs/SYNC-MCP.md)：同步协议与 ChatGPT/MCP 配置
+- [`docs/MCP-OPERATIONS.md`](docs/MCP-OPERATIONS.md)：独立 MCP、Windows 服务、Tunnel 与验收手册
 - [`docs/AI-CODING-GUIDE.md`](docs/AI-CODING-GUIDE.md)：AI coding 工作流、日志和验收规则
 - [`docs/BUGS.md`](docs/BUGS.md)：已知问题、修复记录与 Bug 模板
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md)：按版本维护的开发变更日志
@@ -87,7 +92,8 @@ MCP 接口：`http://127.0.0.1:3001/mcp`
 src/                 React 应用
 public/              PWA 静态资源
 android/             Capacitor Android 工程
-mcp-server.mjs       同步服务与 MCP 服务
+mcp/                 独立 Journal MCP、Windows 服务与 Tunnel
+mcp-server.mjs       兼容启动入口
 edge-bridge.mjs      旧版 Edge 桥接实验，不是主链路
 data/                MCP 服务运行数据（本地生成，不提交隐私内容）
 docs/                项目文档与治理规则

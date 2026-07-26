@@ -2,7 +2,7 @@
 export function buildReviewPrompt(date: string): string {
   return `请使用“拾光日记”连接器完成 ${date} 的个人日记复盘。
 
-先调用 get_journal_by_date 读取当天完整记录片与写作时间，再调用 list_recent_journals 读取近期记录作为长期脉络。连接器是只读的；不要修改、补写或虚构任何日记。
+先调用 journal_get_entry 获取当天日记元数据和 Resource URI，再读取 journal://entries/{date} 获取完整记录片与写作时间，并调用 journal_list_recent 读取近期记录作为长期脉络。不要修改、补写或虚构任何日记。
 
 这不是简短摘要。请根据日记证据给出一份深入、诚实、具体且温和的复盘，按以下结构输出：
 1. 今日全景：发生了什么，哪些事情最重要，它们之间有什么联系。

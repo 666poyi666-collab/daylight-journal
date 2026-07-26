@@ -1,0 +1,26 @@
+<service>
+  <id>PoyiJournalTunnel</id>
+  <name>Poyi Journal Secure MCP Tunnel</name>
+  <description>Independent outbound Secure MCP Tunnel for Journal MCP.</description>
+  <executable>powershell.exe</executable>
+  <arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%BASE%\mcp\tunnel\run-service.ps1"</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <env name="JOURNAL_MCP_DATA_DIR" value="%JOURNAL_MCP_DATA_DIR%" />
+  <depend>PoyiJournalMcp</depend>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart>true</delayedAutoStart>
+  <stoptimeout>20sec</stoptimeout>
+  <onfailure action="restart" delay="5 sec" />
+  <onfailure action="restart" delay="15 sec" />
+  <onfailure action="restart" delay="60 sec" />
+  <resetfailure>1 hour</resetfailure>
+  <logpath>%JOURNAL_MCP_DATA_DIR%\service-logs\tunnel</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+  <serviceaccount>
+    <domain>NT SERVICE</domain>
+    <user>PoyiJournalTunnel</user>
+  </serviceaccount>
+</service>

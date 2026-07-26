@@ -53,10 +53,12 @@ import './editorial-ui.css'
 
 type View = 'today' | 'calendar' | 'history' | 'settings'
 
-const JOURNAL_API =
+const JOURNAL_API_URL_KEY = 'daylight-journal-api'
+const JOURNAL_API_TOKEN_KEY = 'daylight-journal-api-token'
+const DEFAULT_JOURNAL_API =
   import.meta.env.VITE_JOURNAL_API_URL ||
-  readStorageValue('daylight-journal-api') ||
-  'http://127.0.0.1:3001'
+  readStorageValue(JOURNAL_API_URL_KEY) ||
+  'http://127.0.0.1:8780'
 const CHATGPT_PROJECT_URL =
   import.meta.env.VITE_CHATGPT_PROJECT_URL || 'https://chatgpt.com/'
 const SPLASH_SESSION_KEY = 'daylight-splash-seen'
@@ -114,6 +116,10 @@ function App() {
     initialLoad.issue,
   )
   const [syncState, setSyncState] = useState<SyncState>('syncing')
+  const [journalApiUrl, setJournalApiUrl] = useState(DEFAULT_JOURNAL_API)
+  const [journalApiToken, setJournalApiToken] = useState(
+    () => readStorageValue(JOURNAL_API_TOKEN_KEY) || '',
+  )
   const [reviewLaunched, setReviewLaunched] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [chatGptUrl, setChatGptUrl] = useState(() => {
@@ -258,9 +264,14 @@ function App() {
             return true
           }
           try {
-            const response = await fetch(`${JOURNAL_API}/journal/sync`, {
+            const response = await fetch(`${journalApiUrl}/journal/sync`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                ...(journalApiToken
+                  ? { Authorization: `Bearer ${journalApiToken}` }
+                  : {}),
+              },
               body: JSON.stringify(payload),
             })
             if (!response.ok) throw new Error(`Sync failed: ${response.status}`)
@@ -278,7 +289,7 @@ function App() {
       pushChain.current = run
       return run
     },
-    [],
+    [journalApiToken, journalApiUrl],
   )
 
   useEffect(() => {
@@ -301,7 +312,11 @@ function App() {
     const run = (async () => {
       setSyncState('syncing')
       try {
-        const response = await fetch(`${JOURNAL_API}/journal/all`)
+        const response = await fetch(`${journalApiUrl}/journal/all`, {
+          headers: journalApiToken
+            ? { Authorization: `Bearer ${journalApiToken}` }
+            : {},
+        })
         if (!response.ok) throw new Error(`Pull failed: ${response.status}`)
         const remote = await response.json()
         const decoded = decodeJournalEntries(remote)
@@ -325,7 +340,7 @@ function App() {
     } finally {
       syncInFlight.current = null
     }
-  }, [flushLatestEntries, persistSnapshot])
+  }, [flushLatestEntries, journalApiToken, journalApiUrl, persistSnapshot])
 
   useEffect(() => {
     void synchronize();
@@ -822,8 +837,29 @@ function App() {
               <SettingsPage
                 chatGptUrl={chatGptUrl}
                 defaultChatGptUrl={CHATGPT_PROJECT_URL}
+                journalApiUrl={journalApiUrl}
+                journalApiToken={journalApiToken}
                 syncState={syncState}
                 onCheckConnection={synchronize}
+                onSyncConfig={(url, token) => {
+                  const normalizedUrl = safeHttpUrl(url)
+                  const normalizedToken = token.trim()
+                  if (!normalizedUrl || normalizedToken.length < 32) return false
+                  const normalizedServiceUrl = normalizedUrl.replace(/\/$/, '')
+                  const urlResult = writeStorageValue(JOURNAL_API_URL_KEY, normalizedServiceUrl)
+                  const tokenResult = writeStorageValue(JOURNAL_API_TOKEN_KEY, normalizedToken)
+                  if (!urlResult.ok) {
+                    setStorageIssue(urlResult.issue)
+                    return false
+                  }
+                  if (!tokenResult.ok) {
+                    setStorageIssue(tokenResult.issue)
+                    return false
+                  }
+                  setJournalApiUrl(normalizedServiceUrl)
+                  setJournalApiToken(normalizedToken)
+                  return true
+                }}
                 onChatGptUrl={(value) => {
                   setChatGptUrl(value)
                   const result = writeStorageValue(

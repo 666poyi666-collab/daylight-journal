@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Archive, Bot, Check, Download, FileText } from 'lucide-react'
+import { Archive, Bot, Check, Download, FileText, KeyRound, Save } from 'lucide-react'
 import { format } from 'date-fns'
 import type { JournalEntry } from '../journal/model.ts'
 import type { StorageIssue } from '../journal/storage.ts'
@@ -8,9 +8,12 @@ import type { SyncState } from '../journal/status.ts'
 type SettingsPageProps = {
   chatGptUrl: string
   defaultChatGptUrl: string
+  journalApiUrl: string
+  journalApiToken: string
   syncState: SyncState
   onCheckConnection: () => Promise<boolean>
   onChatGptUrl: (value: string) => void
+  onSyncConfig: (url: string, token: string) => boolean
   entries: JournalEntry[]
   storageIssue: StorageIssue | null
 }
@@ -18,15 +21,21 @@ type SettingsPageProps = {
 export function SettingsPage({
   chatGptUrl,
   defaultChatGptUrl,
+  journalApiUrl,
+  journalApiToken,
   syncState,
   onCheckConnection,
   onChatGptUrl,
+  onSyncConfig,
   entries,
   storageIssue,
 }: SettingsPageProps) {
   const [exported, setExported] = useState(false)
   const [checking, setChecking] = useState(false)
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
+  const [serviceUrl, setServiceUrl] = useState(journalApiUrl)
+  const [serviceToken, setServiceToken] = useState(journalApiToken)
+  const [syncConfigSaved, setSyncConfigSaved] = useState(false)
   const exportTimer = useRef<number | undefined>(undefined)
   const totalWords = entries.reduce(
     (sum, entry) => sum + entry.content.replace(/\s/g, '').length,
@@ -60,6 +69,12 @@ export function SettingsPage({
     setExported(true)
     window.clearTimeout(exportTimer.current)
     exportTimer.current = window.setTimeout(() => setExported(false), 2200)
+  }
+
+  function saveSyncConfig() {
+    const saved = onSyncConfig(serviceUrl, serviceToken)
+    setSyncConfigSaved(saved)
+    if (saved) setCheckedAt(null)
   }
 
   return (
@@ -98,6 +113,48 @@ export function SettingsPage({
         </div>
       </section>
       <div className="settings-grid">
+        <section>
+          <div className="settings-icon">
+            <KeyRound />
+          </div>
+          <div>
+            <div className="settings-title-row">
+              <h3>同步服务配对</h3>
+              <button
+                className="connection-check"
+                onClick={saveSyncConfig}
+                disabled={!/^https?:\/\//i.test(serviceUrl) || serviceToken.trim().length < 32}
+              >
+                {syncConfigSaved ? <Check /> : <Save />}
+                {syncConfigSaved ? '已保存' : '保存'}
+              </button>
+            </div>
+            <p>配置 Journal 服务地址和独立配对令牌。</p>
+            <div className="settings-fields">
+              <input
+                type="url"
+                value={serviceUrl}
+                onChange={(event) => {
+                  setServiceUrl(event.target.value)
+                  setSyncConfigSaved(false)
+                }}
+                placeholder="http://journal-host.local:8780"
+                aria-label="Journal 同步服务地址"
+              />
+              <input
+                type="password"
+                value={serviceToken}
+                onChange={(event) => {
+                  setServiceToken(event.target.value)
+                  setSyncConfigSaved(false)
+                }}
+                autoComplete="off"
+                placeholder="配对令牌"
+                aria-label="Journal 同步服务配对令牌"
+              />
+            </div>
+          </div>
+        </section>
         <section>
           <div className="settings-icon ai">
             <Bot />

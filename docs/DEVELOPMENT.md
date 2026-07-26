@@ -18,11 +18,11 @@ npm run dev
 
 ```powershell
 npm run mcp
-curl.exe -s http://127.0.0.1:3001/health
+curl.exe -s http://127.0.0.1:8780/healthz
 ```
 
 `data/journals.json` 是个人运行数据，禁止提交。公开构建默认连接本机
-`http://127.0.0.1:3001`。远端地址和 ChatGPT 项目必须在构建时显式注入：
+`http://127.0.0.1:8780`。远端地址和 ChatGPT 项目必须在构建时显式注入：
 
 ```powershell
 $env:VITE_JOURNAL_API_URL = 'https://your-sync.example.com'
@@ -31,7 +31,7 @@ npm run build
 ```
 
 Vite 的 `VITE_*` 变量会进入客户端包，不能用于保存秘密。服务端密钥只放在运行环境的
-`MCP_TOKEN`，不得写入代码、APK 或 `.env.example`。
+`JOURNAL_API_TOKEN` 或运行时生成的 token 文件，不得写入代码、APK 或 `.env.example`。
 
 ## 日常开发
 
@@ -61,8 +61,15 @@ PWA 或 service worker 变更额外执行：
 npm run test:pwa
 ```
 
-同步/MCP 变更还要验证 `/health`、`/journal/all`、`/journal/sync` 和相关 MCP 工具，
+同步/MCP 变更还要验证 `/healthz`、`/readyz`、`/metrics`、`/v1/*`、兼容同步接口和相关 MCP 工具，
 测试数据目录必须通过 `JOURNAL_DATA_DIR` 隔离。
+
+Windows 服务、Tunnel、Inspector 和 ChatGPT 验收命令见 `MCP-OPERATIONS.md`。不得用
+PersonalMcpGateway 的服务、profile、端口或密钥代替 Journal 独立链路。
+
+手机/平板不使用桌面 loopback。安装版在 Private/LocalSubnet 的 8781 发布
+`_poyi-journal._tcp.local`，设置页保存发现到的 `.local` 地址和配对令牌。调试和生产均
+禁止以 ADB 转发或固定 IP 作为长期同步配置。
 
 ## Android 构建
 

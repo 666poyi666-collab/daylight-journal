@@ -7,13 +7,15 @@ React/Vite/Capacitor
         │
         ├─ localStorage（本端快速读写）
         │
-        └─ HTTPS /journal/all、/journal/sync
+        └─ /journal/all、/journal/sync
                          │
-                  mcp-server.mjs
-                         │
-                  data/journals.json
-                         │
-                  /mcp（ChatGPT Connector）
+                 JournalStore 业务层
+                    │         │
+      data/journals.json      mcp/server.mjs
+                                    │
+ChatGPT → Journal Tunnel → 127.0.0.1:8780/mcp
+
+手机/平板 → mDNS `_poyi-journal._tcp.local` → LAN 8781（认证业务 API，无 MCP）
 ```
 
 ## 代码职责
@@ -27,7 +29,10 @@ React/Vite/Capacitor
 - `src/hooks/useTodayKey.ts`、`src/hooks/useMediaQuery.ts`：跨午夜日期刷新与响应式无障碍状态
 - `tests/`：Node 数据层测试与拦截真实同步请求的 Playwright 浏览器回归
 - `src/index.css`：全局基础与兼容 token；`src/editorial-ui.css`：当前唯一组件样式入口，负责 Editorial Paper 视觉、三栏独立滚动和多端布局；旧样式文件仅保留为历史参考，不进入运行时级联
-- `mcp-server.mjs`：日记同步 REST 接口、Streamable HTTP MCP、兼容 SSE MCP
+- `journal-store.mjs`：Journal 数据、整数 revision、原子写入和持久化幂等重放
+- `journal-api.mjs`：带随机 Bearer 令牌的版本化 `/v1` API
+- `mcp/`：独立 Streamable HTTP MCP、Resource、脱敏审计、健康指标、Windows 服务和 Tunnel
+- `mcp-server.mjs`：指向独立 MCP 的兼容启动入口
 - `public/`：PWA manifest、service worker 和静态图标
 - `android/`：Capacitor 生成和维护的 Android 工程
 - `edge-bridge.mjs`：历史 Edge CDP 桥接实验，不属于默认 AI 链路，除非明确需要不继续扩展
@@ -79,6 +84,16 @@ type JournalBlock = {
 - 损坏或非法本地数据在首次渲染即进入保存错误态，主界面说明恢复副本已保留；编辑器页脚不得同时显示“已自动保存”
 - 同步调度采用拉取单飞与推送串行队列：轮询、网络恢复、页面恢复同时触发时复用同一个拉取请求；编辑、复盘和恢复同步按队列发送，避免旧请求覆盖新稿
 - AI 复盘只有在当前修订版本完成推送后才开放；同步、剪贴板或弹窗失败分别显示恢复动作
+
+## 独立 MCP 边界
+
+- `PoyiJournalMcp` 仅监听 `127.0.0.1:8780`，不注册其他项目工具，也不读取其他数据库。
+- 同一业务进程在 Private/LocalSubnet 的 8781 提供带 Bearer 的 LAN API，并通过 mDNS
+  发布稳定 serviceId；LAN listener 不注册 `/mcp`。
+- `/v1/*` 使用仓库外随机 Bearer token；`/mcp` 只允许通过回环地址或独立 Secure MCP Tunnel 到达。
+- 普通工具只返回状态、元数据、短摘要和 Resource URI；完整正文使用 `journal://entries/{date}`。
+- 写操作由 `JournalStore` 执行，MCP 层只做 schema、错误映射和脱敏审计。
+- Journal 没有后台控制命令，因此 `commandId`、`expectedState`、`expiresAt` 不适用，capabilities 明确返回空 `controlCommands`。
 
 ## PWA 离线壳
 

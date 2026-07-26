@@ -45,11 +45,16 @@ test('journal sync rejects an older revision without touching real data', async 
       ...process.env,
       MCP_PORT: String(port),
       JOURNAL_DATA_DIR: dataDir,
+      JOURNAL_API_TOKEN: 'test-only-journal-api-token-000000000000',
     },
     stdio: 'ignore',
     windowsHide: true,
   })
   const baseUrl = `http://127.0.0.1:${port}`
+  const syncHeaders = {
+    Authorization: 'Bearer test-only-journal-api-token-000000000000',
+    'Content-Type': 'application/json',
+  }
   const baseEntry = {
     schemaVersion: 2,
     date: '2026-07-22',
@@ -80,12 +85,14 @@ test('journal sync rejects an older revision without touching real data', async 
     ]) {
       const response = await fetch(`${baseUrl}/journal/sync`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: syncHeaders,
         body: JSON.stringify([entry]),
       })
       assert.equal(response.status, 200)
     }
-    const stored = await fetch(`${baseUrl}/journal/all`).then((response) => response.json())
+    assert.equal((await fetch(`${baseUrl}/journal/all`)).status, 401)
+    const stored = await fetch(`${baseUrl}/journal/all`, { headers: syncHeaders })
+      .then((response) => response.json())
     assert.equal(stored['2026-07-22'].title, 'newer')
     assert.equal(stored['2026-07-22'].content, 'newer content')
     assert.deepEqual(
@@ -103,15 +110,15 @@ test('journal sync rejects an older revision without touching real data', async 
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'get_journal_by_date',
+          name: 'journal_get_entry',
           arguments: { date: '2026-07-22' },
         },
       }),
     })
     assert.equal(mcpResponse.status, 200)
     const mcpBody = await mcpResponse.text()
-    assert.match(mcpBody, /2026-07-22T08:10:00\.000Z/)
-    assert.equal((mcpBody.match(/newer content/g) || []).length, 1)
+    assert.match(mcpBody, /journal:\/\/entries\/2026-07-22/)
+    assert.doesNotMatch(mcpBody, /newer content/)
     assert.doesNotMatch(mcpBody, /base64/)
   } finally {
     if (server.exitCode === null) {

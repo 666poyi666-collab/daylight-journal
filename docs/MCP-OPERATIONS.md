@@ -1,0 +1,156 @@
+# Journal MCP 独立部署与验收
+
+本文是拾光日记 MCP 的长期运维事实来源。不得把 tunnel ID、API key、Bearer token、
+真实日记、ChatGPT 会话或未经裁剪的生产日志写入本文或 Git。
+
+## 固定架构
+
+```text
+ChatGPT「拾光日记」应用
+→ OpenAI Secure MCP Tunnel（journal-tunnel）
+→ PoyiJournalTunnel（Windows 自动服务）
+→ http://127.0.0.1:8780/mcp
+→ PoyiJournalMcp（Windows 自动服务）
+→ JournalStore / %ProgramData%\Poyi\JournalMcp
+
+手机/平板 → `_poyi-journal._tcp.local` → 8781 认证业务 API（无 MCP）
+```
+
+Journal 运行时不依赖 PersonalMcpGateway。禁止复用其他项目的 MCP Server、tunnel ID、
+runtime key、profile、端口、数据库或日志。Journal 服务停止只能让 Journal 模块不可用，
+不得停止或重启其他项目服务。
+
+## 服务与端口
+
+| 项目 | 固定值 |
+| --- | --- |
+| MCP 服务 | `PoyiJournalMcp` |
+| Tunnel 服务 | `PoyiJournalTunnel` |
+| MCP/业务 API | `127.0.0.1:8780` |
+| MCP endpoint | `http://127.0.0.1:8780/mcp` |
+| LAN 业务 API | `0.0.0.0:8781`，仅 Private/LocalSubnet |
+| mDNS 类型 | `_poyi-journal._tcp.local` |
+| Tunnel operator | `127.0.0.1:8987` |
+| Tunnel profile | `journal` |
+| Tunnel 名称 | `journal-tunnel` |
+| 运行数据 | `%ProgramData%\Poyi\JournalMcp` |
+| 安装目录 | `%ProgramFiles%\Poyi\JournalMcp` |
+
+MCP 服务提供 `GET /healthz`、`GET /readyz`、`GET /metrics`。8781 只提供健康、版本化
+业务 API 和兼容同步接口，任何 `/mcp` 请求必须为 404。Tunnel 自身也在 8987
+提供健康和就绪状态。两个 WinSW 服务均为 Automatic (Delayed)、三级失败重启。
+
+## 认证与权限
+
+- `/v1/*`：独立随机 Bearer token，首次启动生成到运行数据目录；匿名请求返回 401。
+- `/mcp`：只监听 loopback，由独立 Secure MCP Tunnel 和 OpenAI tunnel/runtime key 保护，
+  不直接暴露公网。
+- 手机/平板：使用 mDNS 发现的稳定 serviceId/端口和同一独立随机配对令牌；不使用 ADB
+  转发或固定 IP。token 只保存在应用本地存储的密码配置中。
+- Tunnel runtime key：LocalMachine DPAPI 加密，仅 Administrators 和
+  `NT SERVICE\PoyiJournalTunnel` 可读密文文件。
+- Journal MCP 账户：只对安装目录有 RX、对 Journal 数据目录有 M。
+- Tunnel 账户：只读程序/profile/DPAPI 密文并修改自己的日志；不授予日记文件或 API
+  token 内容读取权限。
+
+任何 Vite `VITE_*` 变量都会进入前端包，禁止把上述秘密放入 Vite、APK、GitHub Actions
+明文变量、命令行输出或日志。
+
+## API、工具与 Resource
+
+版本化 API：`/v1/status`、`/v1/health`、`/v1/capabilities`、列表、单篇读取、创建、
+追加和元数据更新。Gateway 或 MCP 层不得绕过 JournalStore 直接读 JSON。
+
+MCP 工具：
+
+- `journal_get_status`
+- `journal_list_recent`
+- `journal_search`
+- `journal_get_entry`
+- `journal_create_entry`
+- `journal_append_entry`
+- `journal_update_entry`
+
+Resource：`journal://entries/{date}`。完整/长正文只通过 Resource；普通工具返回状态、
+元数据、短摘要和 URI。所有写工具要求 UUID `requestId` 和 `expectedRevision`。Journal
+没有控制命令，capabilities 中 `controlCommands` 是空数组。
+
+## 安装和升级
+
+在管理员 PowerShell 中：
+
+```powershell
+.\mcp\service\install.ps1
+.\mcp\service\status.ps1
+.\mcp\service\verify.ps1
+
+# Tunnel 必须使用新建的 Journal 专用 tunnel ID 和 runtime API key。
+$key = Read-Host 'Journal Tunnel runtime API key' -AsSecureString
+.\mcp\tunnel\install.ps1 -TunnelId 'tunnel_<journal-only>' -RuntimeApiKey $key
+.\mcp\tunnel\doctor.ps1
+.\mcp\tunnel\verify.ps1
+```
+
+升级顺序：先测试源码，再更新 MCP 服务，确认 8780 ready 后更新 Tunnel。卸载只使用
+Journal 的卸载脚本；禁止调用 PersonalMcpGateway 或其他项目的 WinSW 可执行文件。
+
+## 验收命令
+
+```powershell
+npm run lint
+npm run test:unit
+npm run test:mcp:e2e
+npm run build
+
+curl.exe -f http://127.0.0.1:8780/healthz
+curl.exe -f http://127.0.0.1:8780/readyz
+curl.exe -f http://127.0.0.1:8780/metrics
+curl.exe -f http://127.0.0.1:8781/healthz
+# 下列匿名请求应为 401；8781/mcp 应为 404。
+curl.exe -i http://127.0.0.1:8781/v1/status
+curl.exe -i http://127.0.0.1:8781/mcp
+
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8780/mcp `
+  --transport http --method tools/list
+npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8780/mcp `
+  --transport http --method resources/templates/list
+```
+
+Inspector 必须看到 7 个带 `journal_` 命名空间的工具和一个 Resource 模板。Windows
+Node 24 上若 Inspector 在打印成功响应后因已知上游退出断言返回非零，不能把它写成
+“完全通过”；应保留成功协议响应，并用 CI 或兼容 Node 再验。
+
+## 真实 ChatGPT 验收
+
+1. Tunnel doctor/ready 均通过后，在 ChatGPT 创建独立“拾光日记”应用并绑定 Journal Tunnel。
+2. 调用 `journal_get_status` 和 `journal_list_recent`，确认只访问 Journal。
+3. 调用 `journal_get_entry` 后读取其 `journal://entries/{date}`，确认 Resource 可读。
+4. 用新 requestId 和当前 revision 做一次显式元数据更新；优先把值更新为原值，避免改变正文。
+5. 原样重复同一 requestId，结果必须 `replayed: true` 且 revision 不再次增加。
+6. 重启 `PoyiJournalMcp` 后再重复 requestId，仍必须重放。
+7. 分别停止 Journal MCP/Tunnel，确认其他 MCP 不受影响；反向停止其他 MCP 时 Journal 仍可用。
+
+真实验收证据只记录时间、工具名、状态、revision/replayed、脱敏 Tunnel 状态和截图路径。
+禁止保存正文、标题、标签、图片、token、Cookie 或完整网络日志。
+
+## 日志规范
+
+允许字段：timestamp、event、requestId、tool、resource、durationMs、outcome、errorCode。
+禁止字段：content、summary、title、tags、coverImage、Authorization、token、API key 和请求体。
+服务日志按 10 MB、3 个文件轮转。支持包只收集版本、服务状态、健康结果、计数指标和
+脱敏错误码；采集后必须人工检查再分享。
+
+## 2026-07-26 本机证据
+
+- `PoyiJournalMcp` 安装为 Automatic (Delayed)，服务账户为
+  `NT SERVICE\PoyiJournalMcp`。
+- `/healthz`、`/readyz`、`/metrics` 返回 200。
+- 强制结束 MCP 服务进程后 WinSW 自动分配新 PID 并恢复 ready。
+- 正确终止 Node 子进程后，8780/8781 由同一新 PID 恢复；安装器会清理绝对 Journal
+  entry point 对应的孤儿进程。
+- 8781 实际绑定 `0.0.0.0`，防火墙仅 Private/LocalSubnet；匿名 API 为 401、`/mcp`
+  为 404。mDNS 实测发现端口 8781、稳定 serviceId 和 API v1。
+- 单元/集成/契约测试 16 项通过，lint 与生产构建通过。
+- Inspector 成功返回 7 个工具和 Resource 模板，但 Windows Node 24 在响应后触发已登记的
+ 退出断言，见 `BUGS.md` KR-006。
+- Tunnel、ChatGPT 真实读写、CI、APK 和提交 SHA 在完成后追加到发布记录，不在此处记录秘密。
