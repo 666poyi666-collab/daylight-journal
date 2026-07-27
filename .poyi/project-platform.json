@@ -1,0 +1,52 @@
+{
+  "standardVersion": 1,
+  "id": "daylight-journal",
+  "name": "Daylight Journal",
+  "runtimeProject": true,
+  "dataPolicy": "sensitive_cloud_allowed",
+  "dataInventory": [
+    {
+      "id": "journal-entries",
+      "classification": "private",
+      "dataPlane": "cloud_primary",
+      "mcpExposure": "resource",
+      "coverage": "partial",
+      "reason": "SyncEnvelopeV1 encrypts entries before upload; staging and PC-off acceptance remain pending."
+    },
+    {
+      "id": "device-credentials",
+      "classification": "secret",
+      "dataPlane": "local_only",
+      "mcpExposure": "none",
+      "coverage": "complete",
+      "reason": "Device tokens and root-key wrappers stay in secure device storage and never enter an envelope."
+    }
+  ],
+  "mcp": {
+    "status": "partial",
+    "dataPlane": "cloud_primary",
+    "cloudBaseUrl": "https://journal-mcp.focuslink-poyi-6465e9.workers.dev",
+    "routes": {
+      "mcp": "/mcp",
+      "health": "/healthz",
+      "ready": "/readyz",
+      "oauthResourceMetadata": "/.well-known/oauth-protected-resource/mcp"
+    }
+  },
+  "sync": {
+    "status": "partial",
+    "dataPlane": "cloud_primary",
+    "authority": "cloud",
+    "contractId": "sync-envelope-v1",
+    "envelopeVersion": 1,
+    "routes": {
+      "exchange": "/sync/v2/exchange",
+      "status": "/sync/v2/status"
+    },
+    "supportsPcOff": false,
+    "supportsBidirectionalDelta": false
+  },
+  "knownGaps": [
+    "Encrypted attachment object transfer, staging OAuth, real-device recovery and PC-off acceptance evidence are pending."
+  ]
+}

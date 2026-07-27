@@ -2662,7 +2662,8 @@
   gap: 8px;
 }
 
-.settings-grid input {
+.settings-grid input,
+.settings-grid textarea {
   width: 100%;
   padding: 9px 12px;
   font-size: var(--t-small);
@@ -2672,13 +2673,22 @@
   transition: box-shadow var(--t-fast) var(--ease);
 }
 
-.settings-grid input::placeholder {
+.settings-grid input::placeholder,
+.settings-grid textarea::placeholder {
   color: var(--ink-4);
 }
 
-.settings-grid input:focus {
+.settings-grid input:focus,
+.settings-grid textarea:focus {
   outline: none;
   box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.settings-grid textarea {
+  min-height: 78px;
+  resize: vertical;
+  font-family: ui-monospace, "Cascadia Mono", monospace;
+  line-height: 1.45;
 }
 
 .connection-actions {

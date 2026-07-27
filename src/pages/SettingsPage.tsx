@@ -15,7 +15,6 @@ import { format } from 'date-fns'
 import type { JournalEntry } from '../journal/model.ts'
 import type { StorageIssue } from '../journal/storage.ts'
 import type { SyncState } from '../journal/status.ts'
-import { journalFetch } from '../journal/http.ts'
 import {
   canDiscoverJournalService,
   discoverJournalService,
@@ -217,11 +216,16 @@ type SettingsPageProps = LockSectionProps & {
   chatGptUrl: string
   defaultChatGptUrl: string
   journalApiUrl: string
-  journalApiToken: string
+  syncConfigured: boolean
   syncState: SyncState
   onCheckConnection: () => Promise<boolean>
   onChatGptUrl: (value: string) => void
-  onSyncConfig: (url: string, token: string) => boolean
+  onSyncConfig: (url: string, token: string) => Promise<boolean>
+  onCreateRecoveryPackage: (secret: string) => Promise<Record<string, unknown>>
+  onImportRecoveryPackage: (secret: string, value: unknown) => Promise<void>
+  onCreateApprovalIdentity: () => Promise<Record<string, unknown>>
+  onCreateApprovalPackage: (target: unknown) => Promise<Record<string, unknown>>
+  onAcceptApprovalPackage: (value: unknown) => Promise<void>
   entries: JournalEntry[]
   storageIssue: StorageIssue | null
 }
@@ -236,11 +240,16 @@ export function SettingsPage({
   chatGptUrl,
   defaultChatGptUrl,
   journalApiUrl,
-  journalApiToken,
+  syncConfigured,
   syncState,
   onCheckConnection,
   onChatGptUrl,
   onSyncConfig,
+  onCreateRecoveryPackage,
+  onImportRecoveryPackage,
+  onCreateApprovalIdentity,
+  onCreateApprovalPackage,
+  onAcceptApprovalPackage,
   entries,
   storageIssue,
 }: SettingsPageProps) {
@@ -248,11 +257,16 @@ export function SettingsPage({
   const [checking, setChecking] = useState(false)
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
   const [serviceUrl, setServiceUrl] = useState(journalApiUrl)
-  const [pairingCode, setPairingCode] = useState('')
-  const [syncConfigSaved, setSyncConfigSaved] = useState(Boolean(journalApiToken))
+  const [deviceToken, setDeviceToken] = useState('')
+  const [syncConfigSaved, setSyncConfigSaved] = useState(syncConfigured)
   const [discovering, setDiscovering] = useState(false)
-  const [pairing, setPairing] = useState(false)
+  const [savingCredential, setSavingCredential] = useState(false)
   const [discoveryMessage, setDiscoveryMessage] = useState('')
+  const [recoverySecret, setRecoverySecret] = useState('')
+  const [recoveryPackage, setRecoveryPackage] = useState('')
+  const [approvalRequest, setApprovalRequest] = useState('')
+  const [approvalPackage, setApprovalPackage] = useState('')
+  const [keyMessage, setKeyMessage] = useState('')
   const exportTimer = useRef<number | undefined>(undefined)
   const totalWords = entries.reduce(
     (sum, entry) => sum + entry.content.replace(/\s/g, '').length,
@@ -262,6 +276,11 @@ export function SettingsPage({
   useEffect(() => {
     return () => window.clearTimeout(exportTimer.current)
   }, [])
+
+  useEffect(() => {
+    setServiceUrl(journalApiUrl)
+    setSyncConfigSaved(syncConfigured)
+  }, [journalApiUrl, syncConfigured])
 
   async function checkConnection() {
     setChecking(true)
@@ -306,43 +325,80 @@ export function SettingsPage({
     }
   }
 
-  async function pairService() {
-    if (pairing || !/^\d{6}$/.test(pairingCode)) return
-    setPairing(true)
+  async function saveDeviceCredential() {
+    if (savingCredential) return
+    setSavingCredential(true)
     setDiscoveryMessage('')
     try {
       const baseUrl = serviceUrl.replace(/\/$/, '')
-      const response = await journalFetch(`${baseUrl}/pairing/exchange`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: pairingCode }),
-      })
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        const errorCode = body?.error?.code
-        throw new Error(
-          errorCode === 'PAIRING_CODE_REJECTED'
-            ? '配对码不正确，请检查后重试。'
-            : errorCode === 'PAIRING_LOCKED'
-              ? '尝试次数已用完，请在电脑上生成新配对码。'
-              : errorCode === 'PAIRING_EXPIRED' || errorCode === 'PAIRING_NOT_ACTIVE'
-                ? '配对码已失效，请在电脑上生成新配对码。'
-                : '配对服务暂时不可用。',
-        )
-      }
-      if (typeof body.token !== 'string' || body.token.length < 32) {
-        throw new Error('配对服务返回了无效凭据。')
-      }
-      const saved = onSyncConfig(baseUrl, body.token)
+      const saved = await onSyncConfig(baseUrl, deviceToken)
       if (!saved) throw new Error('配对凭据无法保存到本机。')
-      setPairingCode('')
+      setDeviceToken('')
       setSyncConfigSaved(true)
       setCheckedAt(null)
-      setDiscoveryMessage('配对成功，正在同步。')
+      setDiscoveryMessage('设备凭据已保存到安全存储。')
     } catch (error) {
-      setDiscoveryMessage(error instanceof Error ? error.message : '配对失败。')
+      setDiscoveryMessage(error instanceof Error ? error.message : '设备凭据保存失败。')
     } finally {
-      setPairing(false)
+      setSavingCredential(false)
+    }
+  }
+
+  function parsePackage(value: string, label: string): unknown {
+    try {
+      return JSON.parse(value)
+    } catch {
+      throw new Error(`${label} 不是有效 JSON。`)
+    }
+  }
+
+  async function exportRecoveryPackage() {
+    try {
+      const value = await onCreateRecoveryPackage(recoverySecret)
+      setRecoveryPackage(JSON.stringify(value, null, 2))
+      setKeyMessage('恢复包已生成。')
+    } catch (error) {
+      setKeyMessage(error instanceof Error ? error.message : '恢复包生成失败。')
+    }
+  }
+
+  async function importRecoveryPackage() {
+    try {
+      await onImportRecoveryPackage(recoverySecret, parsePackage(recoveryPackage, '恢复包'))
+      setKeyMessage('恢复密钥已导入。')
+    } catch (error) {
+      setKeyMessage(error instanceof Error ? error.message : '恢复包导入失败。')
+    }
+  }
+
+  async function createApprovalRequest() {
+    try {
+      setApprovalRequest(JSON.stringify(await onCreateApprovalIdentity(), null, 2))
+      setKeyMessage('设备批准请求已生成。')
+    } catch (error) {
+      setKeyMessage(error instanceof Error ? error.message : '批准请求生成失败。')
+    }
+  }
+
+  async function createApprovalPackage() {
+    try {
+      setApprovalPackage(JSON.stringify(
+        await onCreateApprovalPackage(parsePackage(approvalRequest, '设备批准请求')),
+        null,
+        2,
+      ))
+      setKeyMessage('已生成设备批准包。')
+    } catch (error) {
+      setKeyMessage(error instanceof Error ? error.message : '批准包生成失败。')
+    }
+  }
+
+  async function acceptApprovalPackage() {
+    try {
+      await onAcceptApprovalPackage(parsePackage(approvalPackage, '设备批准包'))
+      setKeyMessage('设备批准包已导入。')
+    } catch (error) {
+      setKeyMessage(error instanceof Error ? error.message : '批准包导入失败。')
     }
   }
 
@@ -388,7 +444,7 @@ export function SettingsPage({
           </div>
           <div>
             <div className="settings-title-row">
-              <h3>同步服务配对</h3>
+              <h3>加密同步设备</h3>
               <div className="connection-actions">
                 {canDiscoverJournalService() && (
                   <button
@@ -402,19 +458,19 @@ export function SettingsPage({
                 )}
                 <button
                   className="connection-check"
-                  onClick={() => void pairService()}
+                  onClick={() => void saveDeviceCredential()}
                   disabled={
-                    pairing ||
+                    savingCredential ||
                     !/^https?:\/\//i.test(serviceUrl) ||
-                    !/^\d{6}$/.test(pairingCode)
+                    !/^dj1\.[A-Za-z0-9][A-Za-z0-9_-]{2,127}\.[A-Za-z0-9_-]{32,}$/.test(deviceToken)
                   }
                 >
                   {syncConfigSaved ? <Check /> : <Save />}
-                  {pairing ? '配对中…' : syncConfigSaved ? '已配对' : '配对'}
+                  {savingCredential ? '保存中…' : syncConfigSaved ? '已绑定' : '保存 token'}
                 </button>
               </div>
             </div>
-            <p>在电脑开始菜单打开“拾光手机配对”，输入窗口中的 6 位配对码。</p>
+            <p>使用由授权设备或离线恢复流程签发的设备 token。</p>
             <div className="settings-fields">
               <input
                 type="url"
@@ -427,20 +483,76 @@ export function SettingsPage({
                 aria-label="Journal 同步服务地址"
               />
               <input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={pairingCode}
+                type="password"
+                value={deviceToken}
                 onChange={(event) => {
-                  setPairingCode(event.target.value.replace(/\D/g, ''))
+                  setDeviceToken(event.target.value.trim())
                   setSyncConfigSaved(false)
                 }}
                 autoComplete="off"
-                placeholder={journalApiToken ? '已安全配对' : '电脑上显示的 6 位配对码'}
-                aria-label="Journal 同步服务 6 位配对码"
+                placeholder={syncConfigured ? '已保存到安全存储' : 'dj1.<device-id>.<secret>'}
+                aria-label="Journal 同步设备 token"
               />
             </div>
             {discoveryMessage && <small role="status">{discoveryMessage}</small>}
+          </div>
+        </section>
+        <section>
+          <div className="settings-icon">
+            <KeyRound />
+          </div>
+          <div>
+            <div className="settings-title-row">
+              <h3>恢复与设备批准</h3>
+            </div>
+            <div className="settings-fields">
+              <input
+                type="password"
+                value={recoverySecret}
+                onChange={(event) => setRecoverySecret(event.target.value)}
+                autoComplete="new-password"
+                placeholder="恢复密钥短语（至少 16 个字符）"
+                aria-label="Journal 恢复密钥短语"
+              />
+              <div className="connection-actions">
+                <button className="connection-check" onClick={() => void exportRecoveryPackage()} disabled={!syncConfigured}>
+                  导出恢复包
+                </button>
+                <button className="connection-check" onClick={() => void importRecoveryPackage()} disabled={!syncConfigured}>
+                  导入恢复包
+                </button>
+              </div>
+              <textarea
+                value={recoveryPackage}
+                onChange={(event) => setRecoveryPackage(event.target.value)}
+                placeholder="恢复包 JSON"
+                aria-label="Journal 恢复包"
+              />
+              <div className="connection-actions">
+                <button className="connection-check" onClick={() => void createApprovalRequest()} disabled={!syncConfigured}>
+                  生成批准请求
+                </button>
+                <button className="connection-check" onClick={() => void createApprovalPackage()} disabled={!syncConfigured || !approvalRequest.trim()}>
+                  生成批准包
+                </button>
+                <button className="connection-check" onClick={() => void acceptApprovalPackage()} disabled={!syncConfigured || !approvalPackage.trim()}>
+                  导入批准包
+                </button>
+              </div>
+              <textarea
+                value={approvalRequest}
+                onChange={(event) => setApprovalRequest(event.target.value)}
+                placeholder="设备批准请求 JSON"
+                aria-label="Journal 设备批准请求"
+              />
+              <textarea
+                value={approvalPackage}
+                onChange={(event) => setApprovalPackage(event.target.value)}
+                placeholder="设备批准包 JSON"
+                aria-label="Journal 设备批准包"
+              />
+            </div>
+            {keyMessage && <small role="status">{keyMessage}</small>}
           </div>
         </section>
         <section>

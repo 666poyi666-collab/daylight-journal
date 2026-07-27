@@ -42,7 +42,6 @@ import {
 } from './journal/lock.ts'
 import {
   applyEntryPatch,
-  decodeJournalEntries,
   emptyEntry,
   hasEntryContent,
   hasReviewableText,
@@ -61,7 +60,19 @@ import {
   type StorageIssue,
 } from './journal/storage.ts'
 import type { SaveState, SyncState } from './journal/status.ts'
-import { journalFetch } from './journal/http.ts'
+import {
+  acceptJournalDeviceApprovalPackage,
+  createJournalDeviceApprovalPackage,
+  createJournalRecoveryPackage,
+  importJournalRecoveryPackage,
+  journalDeviceApprovalIdentity,
+  syncEncryptedJournal,
+} from './journal/encryptedSync.ts'
+import {
+  loadJournalSyncCredential,
+  removeLegacyJournalSyncToken,
+  saveJournalSyncCredential,
+} from './journal/syncCredentials.ts'
 import { buildReviewPrompt } from './journal/review.ts'
 import './journal-ui.css'
 
@@ -104,6 +115,7 @@ type SyncIssue = 'unpaired' | 'auth' | 'server' | 'network'
 /** 把同步失败归类，供状态栏给出可行动的提示：未配对/令牌被拒引导去设置页。 */
 function classifySyncIssue(error: unknown): SyncIssue {
   const message = error instanceof Error ? error.message : ''
+  if (/not paired|device token|device identity/i.test(message)) return 'unpaired'
   const status = /failed: (\d+)/.exec(message)?.[1]
   if (status === '401' || status === '403') return 'auth'
   if (status) return 'server'
@@ -166,9 +178,8 @@ function App() {
   const [syncState, setSyncState] = useState<SyncState>('syncing')
   const [syncIssue, setSyncIssue] = useState<SyncIssue | null>(null)
   const [journalApiUrl, setJournalApiUrl] = useState(DEFAULT_JOURNAL_API)
-  const [journalApiToken, setJournalApiToken] = useState(
-    () => readStorageValue(JOURNAL_API_TOKEN_KEY) || '',
-  )
+  const [journalApiToken, setJournalApiToken] = useState('')
+  const [credentialReady, setCredentialReady] = useState(false)
   const [reviewLaunched, setReviewLaunched] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [chatGptUrl, setChatGptUrl] = useState(() => {
@@ -199,6 +210,36 @@ function App() {
   const hiddenAtRef = useRef(0)
   const lockRecordRef = useRef(lockRecord)
   lockRecordRef.current = lockRecord
+
+  useEffect(() => {
+    let active = true
+    const restoreCredential = async () => {
+      try {
+        let credential = await loadJournalSyncCredential()
+        if (!credential) {
+          const legacyToken = readStorageValue(JOURNAL_API_TOKEN_KEY)
+          const legacyEndpoint = readStorageValue(JOURNAL_API_URL_KEY)
+          if (legacyToken && legacyEndpoint) {
+            credential = await saveJournalSyncCredential(
+              legacyEndpoint.replace(/\/$/, ''),
+              legacyToken,
+            )
+            removeLegacyJournalSyncToken(JOURNAL_API_TOKEN_KEY)
+          }
+        }
+        if (active && credential) {
+          setJournalApiUrl(credential.endpoint)
+          setJournalApiToken(credential.deviceToken)
+        }
+      } catch {
+        // Leave sync unpaired rather than falling back to a plaintext credential.
+      } finally {
+        if (active) setCredentialReady(true)
+      }
+    }
+    void restoreCredential()
+    return () => { active = false }
+  }, [])
 
   const entry = entries[selectedDate] || emptyEntry(selectedDate)
   const hasCurrentEntry = hasEntryContent(entry)
@@ -389,30 +430,23 @@ function App() {
       const run = pushChain.current
         .catch(() => false)
         .then(async () => {
-          const payload = Object.values(snapshot).filter(hasEntryContent)
           setSyncState('syncing')
-          if (!payload.length) {
-            if (revision >= syncedRevisionRef.current) {
-              syncedRevisionRef.current = revision
-            }
-            if (revision === revisionRef.current) {
-              setSyncState('synced')
-              setSyncIssue(null)
-            }
-            return true
-          }
           try {
-            const response = await journalFetch(`${journalApiUrl}/journal/sync`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(journalApiToken
-                  ? { Authorization: `Bearer ${journalApiToken}` }
-                  : {}),
-              },
-              body: JSON.stringify(payload),
+            const result = await syncEncryptedJournal({
+              endpoint: journalApiUrl,
+              deviceToken: journalApiToken,
+              entries: snapshot,
             })
-            if (!response.ok) throw new Error(`Sync failed: ${response.status}`)
+            const materialized = revision === revisionRef.current
+              ? result.entries
+              : mergeEntries(entriesRef.current, result.entries)
+            if (JSON.stringify(materialized) !== JSON.stringify(entriesRef.current)) {
+              entriesRef.current = materialized
+              setEntries(materialized)
+              revisionRef.current += 1
+              const persisted = persistSnapshot(materialized)
+              setSaveState(persisted.ok ? 'saved' : 'error')
+            }
             syncedRevisionRef.current = Math.max(
               syncedRevisionRef.current,
               revision,
@@ -433,7 +467,7 @@ function App() {
       pushChain.current = run
       return run
     },
-    [journalApiToken, journalApiUrl],
+    [journalApiToken, journalApiUrl, persistSnapshot],
   )
 
   useEffect(() => {
@@ -452,26 +486,16 @@ function App() {
   }, [pushEntries])
 
   const synchronize = useCallback(async (): Promise<boolean> => {
+    if (!credentialReady) return false
+    if (!journalApiToken) {
+      setSyncState('offline')
+      setSyncIssue('unpaired')
+      return false
+    }
     if (syncInFlight.current) return syncInFlight.current
     const run = (async () => {
       setSyncState('syncing')
       try {
-        const response = await journalFetch(`${journalApiUrl}/journal/all`, {
-          headers: journalApiToken
-            ? { Authorization: `Bearer ${journalApiToken}` }
-            : {},
-        })
-        if (!response.ok) throw new Error(`Pull failed: ${response.status}`)
-        const remote = await response.json()
-        const decoded = decodeJournalEntries(remote)
-        if (decoded.invalidRoot) throw new Error('Invalid remote journal data')
-        const merged = mergeEntries(entriesRef.current, decoded.entries)
-        entriesRef.current = merged
-        revisionRef.current += 1
-        setEntries(merged)
-        const persisted = persistSnapshot(merged)
-        if (!persisted.ok) setSaveState('error')
-        else setSaveState('saved')
         return await flushLatestEntries()
       } catch (error) {
         setSyncState('offline')
@@ -485,9 +509,10 @@ function App() {
     } finally {
       syncInFlight.current = null
     }
-  }, [flushLatestEntries, journalApiToken, journalApiUrl, persistSnapshot])
+  }, [credentialReady, flushLatestEntries, journalApiToken])
 
   useEffect(() => {
+    if (!credentialReady) return
     void synchronize();
     const retry = () => void synchronize();
     const resume = () => {
@@ -503,7 +528,7 @@ function App() {
       window.removeEventListener("online", retry);
       document.removeEventListener("visibilitychange", resume);
     };
-  }, [synchronize]);
+  }, [credentialReady, synchronize]);
 
   useEffect(() => {
     return () => {
@@ -1023,27 +1048,49 @@ function App() {
                 chatGptUrl={chatGptUrl}
                 defaultChatGptUrl={CHATGPT_PROJECT_URL}
                 journalApiUrl={journalApiUrl}
-                journalApiToken={journalApiToken}
+                syncConfigured={Boolean(journalApiToken)}
                 syncState={syncState}
                 onCheckConnection={synchronize}
-                onSyncConfig={(url, token) => {
+                onSyncConfig={async (url, token) => {
                   const normalizedUrl = safeHttpUrl(url)
                   const normalizedToken = token.trim()
                   if (!normalizedUrl || normalizedToken.length < 32) return false
                   const normalizedServiceUrl = normalizedUrl.replace(/\/$/, '')
                   const urlResult = writeStorageValue(JOURNAL_API_URL_KEY, normalizedServiceUrl)
-                  const tokenResult = writeStorageValue(JOURNAL_API_TOKEN_KEY, normalizedToken)
                   if (!urlResult.ok) {
                     setStorageIssue(urlResult.issue)
                     return false
                   }
-                  if (!tokenResult.ok) {
-                    setStorageIssue(tokenResult.issue)
+                  try {
+                    await saveJournalSyncCredential(normalizedServiceUrl, normalizedToken)
+                  } catch {
+                    setStorageIssue('unavailable')
                     return false
                   }
                   setJournalApiUrl(normalizedServiceUrl)
                   setJournalApiToken(normalizedToken)
+                  setCredentialReady(true)
                   return true
+                }}
+                onCreateRecoveryPackage={async (secret) => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  return createJournalRecoveryPackage(secret)
+                }}
+                onImportRecoveryPackage={async (secret, value) => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  await importJournalRecoveryPackage(journalApiToken, secret, value)
+                }}
+                onCreateApprovalIdentity={async () => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  return journalDeviceApprovalIdentity(journalApiToken)
+                }}
+                onCreateApprovalPackage={async (target) => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  return createJournalDeviceApprovalPackage(journalApiToken, target)
+                }}
+                onAcceptApprovalPackage={async (value) => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  await acceptJournalDeviceApprovalPackage(journalApiToken, value)
                 }}
                 onChatGptUrl={(value) => {
                   setChatGptUrl(value)

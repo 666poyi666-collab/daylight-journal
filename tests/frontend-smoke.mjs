@@ -50,7 +50,6 @@ async function openApp({
   const context = await browser.newContext({ viewport, reducedMotion })
   const page = await context.newPage()
   const requests = []
-  const pairingRequests = []
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('console', (message) => {
@@ -59,16 +58,7 @@ async function openApp({
     }
   })
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
-  await page.route(/\/pairing\/exchange$/, async (route) => {
-    pairingRequests.push(JSON.parse(route.request().postData() || '{}'))
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ token: 'test-only-pairing-token-000000000000' }),
-    })
-  })
-  await page.route(/\/journal\/(all|sync)$/, async (route) => {
-    const request = route.request()
+  await page.route(/\/sync\/v2\/exchange$/, async (route) => {
     if (failSync) {
       await route.fulfill({
         status: 503,
@@ -77,19 +67,29 @@ async function openApp({
       })
       return
     }
-    if (request.method() === 'GET') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: '{}',
-      })
-      return
-    }
-    requests.push(JSON.parse(request.postData() || '[]'))
+    const body = JSON.parse(route.request().postData() || '{}')
+    requests.push(body)
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      body: JSON.stringify({
+        protocolVersion: 2,
+        envelopeVersion: 1,
+        product: 'journal',
+        acknowledged: (body.mutations || []).map((mutation) => ({
+          outcome: 'acknowledged',
+          opId: mutation.opId,
+          entityType: mutation.entityType,
+          entityId: mutation.entityId,
+          operation: mutation.operation,
+          revision: mutation.baseRevision + 1,
+        })),
+        conflicts: [],
+        changes: [],
+        nextCursor: 'c0',
+        hasMore: false,
+        serverTime: new Date().toISOString(),
+      }),
     })
   })
   await page.addInitScript(
@@ -112,7 +112,7 @@ async function openApp({
     console.error('Page content:', (await page.content()).slice(0, 2_000))
     throw error
   }
-  return { context, page, requests, pairingRequests, errors }
+  return { context, page, requests, errors }
 }
 
 try {
@@ -132,7 +132,7 @@ try {
 
   {
     const session = await openApp({ viewport: { width: 1440, height: 900 } })
-    const { context, page, requests, pairingRequests, errors } = session
+    const { context, page, requests, errors } = session
     await page.getByLabel('日记标题').fill('快速保存回归')
     await page.getByLabel('日记正文').fill('最后一段输入必须立即留在本机')
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -156,7 +156,6 @@ try {
       '图片处理中继续输入也不能被覆盖',
     )
     await page.waitForTimeout(700)
-    assert(requests.flat().some((entry) => entry.content === '图片处理中继续输入也不能被覆盖'))
     await page.screenshot({
       path: path.join(artifactDir, 'desktop.png'),
       fullPage: true,
@@ -174,10 +173,17 @@ try {
       .getByRole('button', { name: '设置', exact: true })
       .click()
     await page.getByLabel('Journal 同步服务地址').fill('http://journal-host.local:8780')
-    await page.getByLabel('Journal 同步服务 6 位配对码').fill('123456')
-    await page.getByRole('button', { name: '配对', exact: true }).click()
-    await page.getByText('配对成功，正在同步。').waitFor()
-    assert.deepEqual(pairingRequests, [{ code: '123456' }])
+    await page.getByLabel('Journal 同步设备 token').fill(
+      'dj1.test-device-1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    )
+    await page.getByRole('button', { name: '保存 token', exact: true }).click()
+    await page.getByText('设备凭据已保存到安全存储。').waitFor()
+    await page.waitForFunction(() => true)
+    assert(requests.some((entry) => Array.isArray(entry.mutations) && entry.mutations.length > 0))
+    assert(
+      requests.every((entry) => !JSON.stringify(entry).includes('图片处理中继续输入也不能被覆盖')),
+      '加密同步请求泄露了日记正文',
+    )
     assert.deepEqual(
       await page.evaluate(() => ({
         url: localStorage.getItem('daylight-journal-api'),
@@ -185,7 +191,7 @@ try {
       })),
       {
         url: 'http://journal-host.local:8780',
-        token: 'test-only-pairing-token-000000000000',
+        token: null,
       },
     )
     await page.screenshot({
