@@ -12,6 +12,7 @@
 | KR-005 | 中 | 暂缓 | GitHub 提供的是 debug 签名 APK，不适合作为正式商店或长期升级包 | 配置 release keystore、版本号和签名验证 |
 | KR-006 | 低 | 待上游 | MCP Inspector 1.0.0 在 Windows Node 24 完成响应后触发 libuv 退出断言 | 保留成功响应证据；CI/兼容 Node 复验并跟踪 Inspector 上游 |
 | KR-007 | 中 | 待上游 | MCP SDK 1.29 间接依赖的 Hono Windows 静态文件适配器有路径穿越公告 | Journal 只使用 Express、不挂载该适配器；持续审计并升级到上游修复版本 |
+| KR-008 | 高 | 待处理 | 跨端共享副本仍运行在个人电脑上，电脑关机期间手机无法同步到其他端 | 选择常驻云环境后设计 JournalStore 部署、密钥、备份和迁移验收 |
 
 ## 已修复并回归
 
@@ -38,6 +39,9 @@
 | BUG-019 | 2026-07 | WinNAT 动态排除端口段漂移到 8757–8856 吞掉 8780/8781：特权进程 bind“成功”但无监听、netstat 无条目、loopback 连接被拒，服务持续假活并被误判为启动卡死；同机普通用户 bind 直接 EACCES | `JOURNAL_TRACE` 打点证实进程各启动阶段全部健康、监听回调已触发，`netsh` 确认动态排除段覆盖；两个安装脚本以管理员保留段固定 8780/8781 与 8887（动态段冲突时临时重启 winnat），verify 前置检测动态排除命中即失败；重装后 readyz/metrics/LAN、verify 退出 0、Tunnel ready、部署冒烟与分页契约现场验证全部通过 |
 | BUG-020 | 2026-07 | 坏 JSON 请求触发 Express 5 默认错误页，完整堆栈与安装路径以 HTML 回给客户端（8780/8781 均可触发，堆栈同时进服务 err 日志） | MCP 与 LAN app 统一注册 JSON 错误处理器：4xx 固定 `INVALID_REQUEST`、5xx 固定 `INTERNAL`，不透出堆栈；契约测试断言 400 响应不含 SyntaxError/node_modules/HTML |
 | BUG-021 | 2026-07 | 手机 App 未配对时同步地址回落到手机自身 `127.0.0.1:8780`，fetch 瞬时失败且无原因提示，“点击重试”体感无反应 | 同步失败分类为未配对/令牌被拒/服务异常/网络四类；未配对与令牌被拒时状态栏按钮改为直接引导去设置页配对；build/lint/单测/前端 E2E 通过，待随下次 APK 构建到真机复验 |
+| BUG-022 | 2026-07 | 文档要求手机保存 `.local` 地址，但 Android WebView 无法解析该名称，且前端没有实现 mDNS 服务发现；Redmi 的 AOSP mDNS 解码器还会拒绝局域网广播包，电脑在线时仍无法同步 | Android 增加原生 NSD 桥，并以受限私网 `/24` Journal 健康探测兼容异常网络栈；Redmi 真机已发现正确 LAN 服务，构建/单测/E2E/部署冒烟通过 |
+| BUG-023 | 2026-07 | 手机配对要求手工搬运 32 位以上长期令牌，既易出错又迫使用户暴露持久凭据 | 改为管理员入口生成 6 位一次性码：5 分钟、5 次、单次使用；生产兑换成功且同码重放 410，集成测试覆盖错码、锁定、过期和重放 |
+| BUG-024 | 2026-07 | Android WebView 能连接 LAN `8781`，但带 JSON/Authorization 的请求被 mixed-content/PNA 拦截为 `Failed to fetch` | Android 同步与配对改走受限原生 HTTP：HTTPS 可远端，明文仅允许私网 Journal 固定端口；Redmi 真机发现与配对接口调用通过，PNA 许可仍只向受信本地 origin 返回 |
 
 ## 新 Bug 模板
 

@@ -1,9 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
-import { Archive, Bot, Check, Download, FileText, KeyRound, LockKeyhole, Save, Type } from 'lucide-react'
+import {
+  Archive,
+  Bot,
+  Check,
+  Download,
+  FileText,
+  KeyRound,
+  LockKeyhole,
+  Radar,
+  Save,
+  Type,
+} from 'lucide-react'
 import { format } from 'date-fns'
 import type { JournalEntry } from '../journal/model.ts'
 import type { StorageIssue } from '../journal/storage.ts'
 import type { SyncState } from '../journal/status.ts'
+import { journalFetch } from '../journal/http.ts'
+import {
+  canDiscoverJournalService,
+  discoverJournalService,
+} from '../native/journalDiscovery.ts'
 
 type LockSectionProps = {
   lockEnabled: boolean
@@ -232,8 +248,11 @@ export function SettingsPage({
   const [checking, setChecking] = useState(false)
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
   const [serviceUrl, setServiceUrl] = useState(journalApiUrl)
-  const [serviceToken, setServiceToken] = useState(journalApiToken)
-  const [syncConfigSaved, setSyncConfigSaved] = useState(false)
+  const [pairingCode, setPairingCode] = useState('')
+  const [syncConfigSaved, setSyncConfigSaved] = useState(Boolean(journalApiToken))
+  const [discovering, setDiscovering] = useState(false)
+  const [pairing, setPairing] = useState(false)
+  const [discoveryMessage, setDiscoveryMessage] = useState('')
   const exportTimer = useRef<number | undefined>(undefined)
   const totalWords = entries.reduce(
     (sum, entry) => sum + entry.content.replace(/\s/g, '').length,
@@ -269,10 +288,62 @@ export function SettingsPage({
     exportTimer.current = window.setTimeout(() => setExported(false), 2200)
   }
 
-  function saveSyncConfig() {
-    const saved = onSyncConfig(serviceUrl, serviceToken)
-    setSyncConfigSaved(saved)
-    if (saved) setCheckedAt(null)
+  async function discoverService() {
+    if (discovering) return
+    setDiscovering(true)
+    setDiscoveryMessage('')
+    try {
+      const service = await discoverJournalService()
+      setServiceUrl(service.url)
+      setSyncConfigSaved(false)
+      setDiscoveryMessage(`已发现 ${service.name}`)
+    } catch (error) {
+      setDiscoveryMessage(
+        error instanceof Error ? error.message : '未发现同步服务',
+      )
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
+  async function pairService() {
+    if (pairing || !/^\d{6}$/.test(pairingCode)) return
+    setPairing(true)
+    setDiscoveryMessage('')
+    try {
+      const baseUrl = serviceUrl.replace(/\/$/, '')
+      const response = await journalFetch(`${baseUrl}/pairing/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: pairingCode }),
+      })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const errorCode = body?.error?.code
+        throw new Error(
+          errorCode === 'PAIRING_CODE_REJECTED'
+            ? '配对码不正确，请检查后重试。'
+            : errorCode === 'PAIRING_LOCKED'
+              ? '尝试次数已用完，请在电脑上生成新配对码。'
+              : errorCode === 'PAIRING_EXPIRED' || errorCode === 'PAIRING_NOT_ACTIVE'
+                ? '配对码已失效，请在电脑上生成新配对码。'
+                : '配对服务暂时不可用。',
+        )
+      }
+      if (typeof body.token !== 'string' || body.token.length < 32) {
+        throw new Error('配对服务返回了无效凭据。')
+      }
+      const saved = onSyncConfig(baseUrl, body.token)
+      if (!saved) throw new Error('配对凭据无法保存到本机。')
+      setPairingCode('')
+      setSyncConfigSaved(true)
+      setCheckedAt(null)
+      setDiscoveryMessage('配对成功，正在同步。')
+    } catch (error) {
+      setDiscoveryMessage(error instanceof Error ? error.message : '配对失败。')
+    } finally {
+      setPairing(false)
+    }
   }
 
   return (
@@ -318,16 +389,32 @@ export function SettingsPage({
           <div>
             <div className="settings-title-row">
               <h3>同步服务配对</h3>
-              <button
-                className="connection-check"
-                onClick={saveSyncConfig}
-                disabled={!/^https?:\/\//i.test(serviceUrl) || serviceToken.trim().length < 32}
-              >
-                {syncConfigSaved ? <Check /> : <Save />}
-                {syncConfigSaved ? '已保存' : '保存'}
-              </button>
+              <div className="connection-actions">
+                {canDiscoverJournalService() && (
+                  <button
+                    className="connection-check"
+                    onClick={() => void discoverService()}
+                    disabled={discovering}
+                  >
+                    <Radar />
+                    {discovering ? '发现中…' : '发现电脑'}
+                  </button>
+                )}
+                <button
+                  className="connection-check"
+                  onClick={() => void pairService()}
+                  disabled={
+                    pairing ||
+                    !/^https?:\/\//i.test(serviceUrl) ||
+                    !/^\d{6}$/.test(pairingCode)
+                  }
+                >
+                  {syncConfigSaved ? <Check /> : <Save />}
+                  {pairing ? '配对中…' : syncConfigSaved ? '已配对' : '配对'}
+                </button>
+              </div>
             </div>
-            <p>配置 Journal 服务地址和独立配对令牌。</p>
+            <p>在电脑开始菜单打开“拾光手机配对”，输入窗口中的 6 位配对码。</p>
             <div className="settings-fields">
               <input
                 type="url"
@@ -340,17 +427,20 @@ export function SettingsPage({
                 aria-label="Journal 同步服务地址"
               />
               <input
-                type="password"
-                value={serviceToken}
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={pairingCode}
                 onChange={(event) => {
-                  setServiceToken(event.target.value)
+                  setPairingCode(event.target.value.replace(/\D/g, ''))
                   setSyncConfigSaved(false)
                 }}
                 autoComplete="off"
-                placeholder="配对令牌"
-                aria-label="Journal 同步服务配对令牌"
+                placeholder={journalApiToken ? '已安全配对' : '电脑上显示的 6 位配对码'}
+                aria-label="Journal 同步服务 6 位配对码"
               />
             </div>
+            {discoveryMessage && <small role="status">{discoveryMessage}</small>}
           </div>
         </section>
         <section>

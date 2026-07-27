@@ -12,6 +12,8 @@ test('Journal services, ports, and profile are isolated', async () => {
   const mcpInstall = await fs.readFile(path.join(root, 'mcp/service/install.ps1'), 'utf8')
   const tunnelInstall = await fs.readFile(path.join(root, 'mcp/tunnel/install.ps1'), 'utf8')
   const tunnelDoctor = await fs.readFile(path.join(root, 'mcp/tunnel/doctor.ps1'), 'utf8')
+  const pairDevice = await fs.readFile(path.join(root, 'mcp/service/pair-device.ps1'), 'utf8')
+  const verifyPairing = await fs.readFile(path.join(root, 'mcp/service/verify-pairing.ps1'), 'utf8')
   assert.match(mcpXml, /<id>PoyiJournalMcp<\/id>/)
   assert.match(mcpXml, /JOURNAL_MCP_PORT[^\n]+8780/)
   assert.match(mcpXml, /%BASE%\\mcp\\main\.mjs/)
@@ -31,6 +33,11 @@ test('Journal services, ports, and profile are isolated', async () => {
   assert.match(tunnelInstall, /excludedportrange/)
   assert.match(tunnelInstall, /Reserve-JournalPorts -StartPort 8887 -Count 1/)
   assert.match(mcpInstall, /PoyiJournalSyncApi/)
+  assert.match(mcpInstall, /拾光手机配对\.lnk/)
+  assert.match(pairDevice, /-Verb RunAs/)
+  assert.match(pairDevice, /pairing-cli\.mjs/)
+  assert.match(verifyPairing, /ReplayStatus/)
+  assert.doesNotMatch(verifyPairing, /Write-(?:Host|Output)[^\n]*(?:code|token)/i)
   assert.match(mcpInstall, /RemoteAddress LocalSubnet/)
   assert.match(mcpInstall, /tunnelWasRunning/)
   assert.match(mcpInstall, /Start-Service -Name 'PoyiJournalTunnel'/)
@@ -61,4 +68,26 @@ test('deployed verification reports only safe aggregate fields', async () => {
   assert.match(verify, /Journal service verification failed/)
   assert.match(verify, /excludedportrange/)
   assert.doesNotMatch(verify, /Write-(?:Host|Output)[^\n]*(?:token|content|title|tags)/i)
+})
+
+test('Android discovers LAN sync without broadcasting credentials', async () => {
+  const mainActivity = await fs.readFile(
+    path.join(root, 'android/app/src/main/java/com/daylight/journal/MainActivity.java'),
+    'utf8',
+  )
+  const discovery = await fs.readFile(
+    path.join(root, 'android/app/src/main/java/com/daylight/journal/JournalDiscoveryPlugin.java'),
+    'utf8',
+  )
+  const manifest = await fs.readFile(
+    path.join(root, 'android/app/src/main/AndroidManifest.xml'),
+    'utf8',
+  )
+  assert.match(mainActivity, /registerPlugin\(JournalDiscoveryPlugin\.class\)/)
+  assert.match(discovery, /_poyi-journal\._tcp\./)
+  assert.match(discovery, /8781\/healthz/)
+  assert.match(discovery, /\\"service\\":\\"Journal Sync API\\"/)
+  assert.doesNotMatch(discovery, /Authorization|Bearer|journal-api-token/)
+  assert.match(manifest, /android\.permission\.ACCESS_WIFI_STATE/)
+  assert.match(manifest, /android\.permission\.CHANGE_WIFI_MULTICAST_STATE/)
 })

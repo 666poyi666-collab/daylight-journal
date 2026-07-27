@@ -61,6 +61,7 @@ import {
   type StorageIssue,
 } from './journal/storage.ts'
 import type { SaveState, SyncState } from './journal/status.ts'
+import { journalFetch } from './journal/http.ts'
 import { buildReviewPrompt } from './journal/review.ts'
 import './journal-ui.css'
 
@@ -401,7 +402,7 @@ function App() {
             return true
           }
           try {
-            const response = await fetch(`${journalApiUrl}/journal/sync`, {
+            const response = await journalFetch(`${journalApiUrl}/journal/sync`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -455,7 +456,7 @@ function App() {
     const run = (async () => {
       setSyncState('syncing')
       try {
-        const response = await fetch(`${journalApiUrl}/journal/all`, {
+        const response = await journalFetch(`${journalApiUrl}/journal/all`, {
           headers: journalApiToken
             ? { Authorization: `Bearer ${journalApiToken}` }
             : {},

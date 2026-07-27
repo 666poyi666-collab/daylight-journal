@@ -64,8 +64,10 @@ npm run mcp
 
 桌面本地同步接口：`http://127.0.0.1:8780/journal/*`
 
-手机/平板同步：通过设置页保存 mDNS 地址（`http://<host>.local:8781`）和独立配对令牌；
-LAN listener 不提供 `/mcp`，不依赖 ADB 或固定 IP。
+手机/平板同步：Android 设置页通过原生 mDNS/NSD（不兼容时回退同网段探活）发现电脑的
+LAN `8781` 地址，再输入电脑端一次性显示的 6 位配对码；应用兑换并保存独立令牌，用户无需搬运长期凭据。
+LAN listener 不提供 `/mcp`，不依赖 ADB 或手填固定 IP。当前共享副本仍运行
+在这台电脑上，电脑关机时不能同步；ChatGPT 使用的 Secure MCP Tunnel 不是手机云同步后端。
 
 MCP 接口：`http://127.0.0.1:8780/mcp`
 

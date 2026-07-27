@@ -50,6 +50,7 @@ async function openApp({
   const context = await browser.newContext({ viewport, reducedMotion })
   const page = await context.newPage()
   const requests = []
+  const pairingRequests = []
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('console', (message) => {
@@ -58,6 +59,14 @@ async function openApp({
     }
   })
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
+  await page.route(/\/pairing\/exchange$/, async (route) => {
+    pairingRequests.push(JSON.parse(route.request().postData() || '{}'))
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ token: 'test-only-pairing-token-000000000000' }),
+    })
+  })
   await page.route(/\/journal\/(all|sync)$/, async (route) => {
     const request = route.request()
     if (failSync) {
@@ -103,7 +112,7 @@ async function openApp({
     console.error('Page content:', (await page.content()).slice(0, 2_000))
     throw error
   }
-  return { context, page, requests, errors }
+  return { context, page, requests, pairingRequests, errors }
 }
 
 try {
@@ -123,7 +132,7 @@ try {
 
   {
     const session = await openApp({ viewport: { width: 1440, height: 900 } })
-    const { context, page, requests, errors } = session
+    const { context, page, requests, pairingRequests, errors } = session
     await page.getByLabel('日记标题').fill('快速保存回归')
     await page.getByLabel('日记正文').fill('最后一段输入必须立即留在本机')
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -165,9 +174,10 @@ try {
       .getByRole('button', { name: '设置', exact: true })
       .click()
     await page.getByLabel('Journal 同步服务地址').fill('http://journal-host.local:8780')
-    await page.getByLabel('Journal 同步服务配对令牌')
-      .fill('test-only-pairing-token-000000000000')
-    await page.getByRole('button', { name: '保存', exact: true }).click()
+    await page.getByLabel('Journal 同步服务 6 位配对码').fill('123456')
+    await page.getByRole('button', { name: '配对', exact: true }).click()
+    await page.getByText('配对成功，正在同步。').waitFor()
+    assert.deepEqual(pairingRequests, [{ code: '123456' }])
     assert.deepEqual(
       await page.evaluate(() => ({
         url: localStorage.getItem('daylight-journal-api'),

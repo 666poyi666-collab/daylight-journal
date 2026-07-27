@@ -157,6 +157,16 @@ foreach ($envNode in @($configuration.SelectNodes('/service/env'))) {
 $configuration.SelectSingleNode('/service/logpath').InnerText = [string](Join-Path $resolvedData 'service-logs\mcp')
 $configuration.Save($configurationPath)
 
+$shortcutPath = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\拾光手机配对.lnk'
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = 'powershell.exe'
+$pairScript = Join-Path $resolvedInstall 'mcp\service\pair-device.ps1'
+$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$pairScript`" -InstallDir `"$resolvedInstall`" -DataDir `"$resolvedData`""
+$shortcut.WorkingDirectory = $resolvedInstall
+$shortcut.Description = '生成拾光手机的一次性安全配对码'
+$shortcut.Save()
+
 $serviceExe = Join-Path $resolvedInstall 'PoyiJournalMcp.exe'
 & $serviceExe install
 if ($LASTEXITCODE -ne 0) { throw 'PoyiJournalMcp service installation failed.' }

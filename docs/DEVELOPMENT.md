@@ -68,8 +68,10 @@ Windows 服务、Tunnel、Inspector 和 ChatGPT 验收命令见 `MCP-OPERATIONS.
 PersonalMcpGateway 的服务、profile、端口或密钥代替 Journal 独立链路。
 
 手机/平板不使用桌面 loopback。安装版在 Private/LocalSubnet 的 8781 发布
-`_poyi-journal._tcp.local`，设置页保存发现到的 `.local` 地址和配对令牌。调试和生产均
-禁止以 ADB 转发或固定 IP 作为长期同步配置。
+`_poyi-journal._tcp.local`，Android 设置页通过原生 NSD 解析当前 LAN 地址，再用电脑端生成的
+6 位一次性码完成配对；长期令牌由应用自动兑换和保存，不进入人工操作。
+调试和生产均禁止以 ADB 转发或用户手填固定 IP 作为长期同步配置。桌面服务是当前共享副本，
+Secure MCP Tunnel 不承载手机同步，因此电脑关机期间只能本地写作。
 
 ## Android 构建
 

@@ -49,8 +49,10 @@ MCP 服务提供 `GET /healthz`、`GET /readyz`、`GET /metrics`。8781 只提�
 - `/v1/*`：独立随机 Bearer token，首次启动生成到运行数据目录；匿名请求返回 401。
 - `/mcp`：只监听 loopback，由独立 Secure MCP Tunnel 和 OpenAI tunnel/runtime key 保护，
   不直接暴露公网。
-- 手机/平板：使用 mDNS 发现的稳定 serviceId/端口和同一独立随机配对令牌；不使用 ADB
-  转发或固定 IP。token 只保存在应用本地存储的密码配置中。
+- 手机/平板：自动发现 LAN 服务后，使用管理员窗口显示的 6 位一次性码兑换独立随机令牌；
+  不使用 ADB、固定 IP 或手工搬运长期 token。token 只保存在应用本地密码字段中。
+- 一次性码：明文仅在管理员窗口显示，服务目录只保存带盐摘要；5 分钟过期、最多 5 次、
+  成功即作废。`/pairing/exchange` 只存在于 LAN `8781`，不进入 MCP/Tunnel。
 - Tunnel runtime key：LocalMachine DPAPI 加密，仅 Administrators 和
   `NT SERVICE\PoyiJournalTunnel` 可读密文文件。
 - Journal MCP 账户：只对安装目录有 RX、对 Journal 数据目录有 M。
@@ -89,6 +91,7 @@ capabilities 中 `controlCommands` 是空数组。
 .\mcp\service\install.ps1
 .\mcp\service\status.ps1
 .\mcp\service\verify.ps1
+.\mcp\service\verify-pairing.ps1
 
 # Tunnel 必须使用新建的 Journal 专用 tunnel ID 和 runtime API key。
 $key = Read-Host 'Journal Tunnel runtime API key' -AsSecureString
@@ -99,6 +102,10 @@ $key = Read-Host 'Journal Tunnel runtime API key' -AsSecureString
 
 升级顺序：先测试源码，再更新 MCP 服务，确认 8780 ready 后更新 Tunnel。卸载只使用
 Journal 的卸载脚本；禁止调用 PersonalMcpGateway 或其他项目的 WinSW 可执行文件。
+
+安装后，Windows 开始菜单会出现“拾光手机配对”。打开后确认 UAC，窗口只显示 6 位短时码；
+手机设置页先“发现电脑”，再输入该码即可。重新配对会使上一个尚未使用的短时码立即失效，
+不会轮换现有长期 token，也不会让已配对设备掉线。
 
 安装脚本会把 8780/8781（MCP）与 8887（Tunnel 健康）登记为 Windows 管理员保留端口段，
 防止 WinNAT 动态排除段漂移吞掉端口（特权 bind 会“成功”但无监听，见 BUG-019）。检查：

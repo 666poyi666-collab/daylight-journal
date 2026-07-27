@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { createJournalApp, createJournalSyncApp } from '../../server.mjs'
+import { startPairing } from '../../pairing.mjs'
 
 test('Journal v1 API authenticates, reports capabilities, and maps conflicts', async () => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'journal-api-'))
@@ -19,7 +20,7 @@ test('Journal v1 API authenticates, reports capabilities, and maps conflicts', a
   })
   const address = listener.address()
   const baseUrl = `http://127.0.0.1:${address.port}`
-  const syncApp = createJournalSyncApp(runtime.store, runtime.apiToken)
+  const syncApp = createJournalSyncApp(runtime.store, runtime.apiToken, dataDir)
   const syncListener = await new Promise((resolve) => {
     const value = syncApp.listen(0, '127.0.0.1', () => resolve(value))
   })
@@ -34,6 +35,72 @@ test('Journal v1 API authenticates, reports capabilities, and maps conflicts', a
     assert.equal((await fetch(`${baseUrl}/journal/all`)).status, 401)
     assert.equal((await fetch(`${baseUrl}/journal/all`, { headers })).status, 200)
     assert.equal((await fetch(`${syncBaseUrl}/healthz`)).status, 200)
+    const privateNetworkPreflight = await fetch(`${syncBaseUrl}/pairing/exchange`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://localhost',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type',
+        'Access-Control-Request-Private-Network': 'true',
+      },
+    })
+    assert.equal(privateNetworkPreflight.status, 204)
+    assert.equal(
+      privateNetworkPreflight.headers.get('access-control-allow-private-network'),
+      'true',
+    )
+    const untrustedPreflight = await fetch(`${syncBaseUrl}/pairing/exchange`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://untrusted.example',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Private-Network': 'true',
+      },
+    })
+    assert.equal(untrustedPreflight.headers.has('access-control-allow-private-network'), false)
+    assert.equal((await fetch(`${baseUrl}/pairing/exchange`, { method: 'POST' })).status, 404)
+
+    await startPairing(dataDir, { randomInt: () => 123456 })
+    const wrongPairing = await fetch(`${syncBaseUrl}/pairing/exchange`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: '654321' }),
+    })
+    assert.equal(wrongPairing.status, 401)
+    assert.equal((await wrongPairing.json()).error.code, 'PAIRING_CODE_REJECTED')
+    const paired = await fetch(`${syncBaseUrl}/pairing/exchange`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: '123456' }),
+    })
+    assert.equal(paired.status, 200)
+    assert.equal((await paired.json()).token, runtime.apiToken)
+    const replay = await fetch(`${syncBaseUrl}/pairing/exchange`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: '123456' }),
+    })
+    assert.equal(replay.status, 410)
+    assert.equal((await replay.json()).error.code, 'PAIRING_NOT_ACTIVE')
+
+    await startPairing(dataDir, { randomInt: () => 111111 })
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const rejected = await fetch(`${syncBaseUrl}/pairing/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: '222222' }),
+      })
+      assert.equal(rejected.status, attempt === 5 ? 429 : 401)
+    }
+
+    await startPairing(dataDir, { now: 1, ttlMs: 1, randomInt: () => 333333 })
+    const expired = await fetch(`${syncBaseUrl}/pairing/exchange`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: '333333' }),
+    })
+    assert.equal(expired.status, 410)
+    assert.equal((await expired.json()).error.code, 'PAIRING_EXPIRED')
 
     const protectedResource = await fetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp`)
       .then((response) => response.json())

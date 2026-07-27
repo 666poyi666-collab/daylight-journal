@@ -15,7 +15,7 @@ React/Vite/Capacitor
                                     │
 ChatGPT → Journal Tunnel → 127.0.0.1:8780/mcp
 
-手机/平板 → mDNS `_poyi-journal._tcp.local` → LAN 8781（认证业务 API，无 MCP）
+手机/平板 → Android NSD / 私网健康探测发现服务 → LAN 8781（认证业务 API，无 MCP）
 ```
 
 ## 代码职责
@@ -24,6 +24,7 @@ ChatGPT → Journal Tunnel → 127.0.0.1:8780/mcp
 - `src/pages/`：编辑、日历、历史和设置页面；页面只通过显式 props 读写应用状态
 - `src/journal/model.ts`：日记类型、运行时数据校验、时间戳合并和不可变 patch
 - `src/journal/storage.ts`：localStorage 安全适配、损坏数据识别、恢复副本和持久化结果分类
+- `src/journal/http.ts`：Android Journal 原生 HTTP 边界；HTTPS 可远端，明文只允许私网/`.local` 的 8780/8781
 - `src/journal/image.ts`、`moods.ts`、`status.ts`：图片压缩、心情选项和保存/同步状态协议
 - `src/journal/review.ts`：生成只读、深度且包含长期模式对照的 ChatGPT 复盘提示词
 - `src/hooks/useTodayKey.ts`、`src/hooks/useMediaQuery.ts`：跨午夜日期刷新与响应式无障碍状态
@@ -74,6 +75,7 @@ type JournalBlock = {
 
 - 本地优先：网络不可用仍可写
 - 服务端是跨端共享副本，不直接替代本地编辑体验
+- 当前共享副本由电脑上的 `PoyiJournalMcp` 持有，不是独立云服务；电脑关机期间各端只写本地，待电脑恢复后再合并
 - 合并按 `updatedAt` 取较新版本
 - 服务端同步写入串行执行，并在写入前重新读取最新副本，避免并发请求和慢设备把旧修订写回
 - 只上传有标题或正文的记录
@@ -91,6 +93,7 @@ type JournalBlock = {
 - 同一业务进程在 Private/LocalSubnet 的 8781 提供带 Bearer 的 LAN API，并通过 mDNS
   发布稳定 serviceId；LAN listener 不注册 `/mcp`。
 - `/v1/*` 使用仓库外随机 Bearer token；`/mcp` 只允许通过回环地址或独立 Secure MCP Tunnel 到达。
+- LAN `/pairing/exchange` 只接受电脑管理员显式生成的 6 位短时码；5 分钟过期、最多 5 次、成功即删除，返回的长期令牌只保存到发起配对的应用本地
 - 列表/搜索工具只返回状态、元数据、短摘要和 Resource URI；`journal_get_entry` 按
   `offset`/`maxChars` 分页返回正文并以 `resource_link` 指向 `journal://entries/{date}`，
   Resource 仍提供权威全文。

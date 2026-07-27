@@ -12,6 +12,8 @@ foreach ($name in @('PoyiJournalTunnel', 'PoyiJournalMcp')) {
 }
 $firewallRule = Get-NetFirewallRule -Name 'PoyiJournalSyncApi' -ErrorAction SilentlyContinue
 if ($null -ne $firewallRule) { Remove-NetFirewallRule -Name 'PoyiJournalSyncApi' }
+$shortcutPath = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\拾光手机配对.lnk'
+if (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
 if ($PurgeData) {
     throw 'Data purge is intentionally not automatic. Remove ProgramData\Poyi\JournalMcp only after a verified export.'
 }

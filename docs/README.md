@@ -26,7 +26,7 @@
 ## 当前状态（2026-07-26）
 
 - 写日记、历史、日历、心情、标签、可选单图封面：可用
-- 手机/平板/网页同步：可用，使用 HTTPS 隧道
+- 手机/平板/网页同步：本地优先；Android 可通过 mDNS/NSD 发现电脑 LAN 服务，电脑关机时暂不能同步
 - 独立 `PoyiJournalMcp`：本地安装、健康检查、故障自动恢复和 MCP 契约已验证
 - 独立 `PoyiJournalTunnel` 与 ChatGPT「拾光日记」应用：真实读写、Resource、重放和重启恢复已验收
 - Obsidian：目前提供 Markdown 导出，尚未做 Vault 双向同步

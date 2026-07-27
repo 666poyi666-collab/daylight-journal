@@ -11,6 +11,7 @@ import {
 import { JournalStore } from '../journal-store.mjs'
 import { AuditLogger } from './audit.mjs'
 import { JournalHealth } from './health.mjs'
+import { createPairingRouter } from './pairing.mjs'
 import { registerJournalResources } from './resources.mjs'
 import { getSettings } from './settings.mjs'
 import { registerJournalTools } from './tools.mjs'
@@ -31,6 +32,19 @@ export function createMcpServer(store, audit, health, version) {
 function configureHttpApp(app) {
   app.disable('x-powered-by')
   app.use(express.json({ limit: '4mb' }))
+  app.use((req, res, next) => {
+    const origin = req.headers.origin || ''
+    const trustedLocalOrigin = origin === 'https://localhost' ||
+      origin === 'capacitor://localhost' ||
+      /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin)
+    if (
+      trustedLocalOrigin &&
+      req.headers['access-control-request-private-network'] === 'true'
+    ) {
+      res.setHeader('Access-Control-Allow-Private-Network', 'true')
+    }
+    next()
+  })
   app.use(cors({ origin: true, exposedHeaders: ['Mcp-Session-Id'] }))
 }
 
@@ -84,10 +98,11 @@ function registerBusinessRoutes(app, store, apiToken) {
   })
 }
 
-export function createJournalSyncApp(store, apiToken) {
+export function createJournalSyncApp(store, apiToken, dataDir) {
   const app = express()
   configureHttpApp(app)
   app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'Journal Sync API' }))
+  app.use('/pairing', createPairingRouter(dataDir, apiToken))
   registerBusinessRoutes(app, store, apiToken)
   registerJsonErrorHandler(app)
   return app
@@ -162,7 +177,7 @@ export async function startJournalServer(settings = getSettings()) {
   let bonjour = null
   let advertisement = null
   if (settings.syncHost) {
-    const syncApp = createJournalSyncApp(runtime.store, runtime.apiToken)
+    const syncApp = createJournalSyncApp(runtime.store, runtime.apiToken, settings.dataDir)
     syncServer = await new Promise((resolve, reject) => {
       const listener = syncApp.listen(settings.syncPort, settings.syncHost, () => resolve(listener))
       listener.once('error', reject)
