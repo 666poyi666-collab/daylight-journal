@@ -16,6 +16,8 @@ if (!executablePath) throw new Error('Chrome or Edge executable was not found')
 const artifactDir = path.join(os.tmpdir(), 'daylight-journal-e2e')
 fs.mkdirSync(artifactDir, { recursive: true })
 const storageKey = 'daylight-journal-entries-v1'
+const syncToken = `dj1.e2e-device.${'a'.repeat(43)}`
+const rootKey = `jk1.1.${'A'.repeat(43)}`
 const today = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Shanghai',
   year: 'numeric',
@@ -58,7 +60,25 @@ async function openApp({
     }
   })
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
-  await page.route(/\/journal\/(all|sync)$/, async (route) => {
+  await page.route(/\/sync\/v2\/objects\//, async (route) => {
+    const request = route.request()
+    const headers = request.headers()
+    if (failSync) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"offline-test"}' })
+      return
+    }
+    await route.fulfill({
+      status: 201,
+      headers: {
+        'X-Ciphertext-Sha256': headers['x-ciphertext-sha256'],
+        'X-Ciphertext-Bytes': headers['x-ciphertext-bytes'],
+        'X-Object-Nonce': headers['x-object-nonce'],
+        'X-Object-Aad-Hash': headers['x-object-aad-hash'],
+        'X-Key-Version': headers['x-key-version'],
+      },
+    })
+  })
+  await page.route(/\/sync\/v2\/exchange$/, async (route) => {
     const request = route.request()
     if (failSync) {
       await route.fulfill({
@@ -68,32 +88,51 @@ async function openApp({
       })
       return
     }
-    if (request.method() === 'GET') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: '{}',
-      })
-      return
-    }
-    requests.push(JSON.parse(request.postData() || '[]'))
+    const envelope = JSON.parse(request.postData() || '{}')
+    requests.push(envelope)
+    const changedAt = new Date().toISOString()
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      body: JSON.stringify({
+        protocolVersion: 2,
+        envelopeVersion: 1,
+        product: 'journal',
+        acknowledged: envelope.mutations.map((mutation) => ({
+          outcome: 'acknowledged',
+          opId: mutation.opId,
+          entityType: mutation.entityType,
+          entityId: mutation.entityId,
+          operation: mutation.operation,
+          revision: mutation.baseRevision + 1,
+        })),
+        conflicts: [],
+        changes: envelope.mutations.map((mutation) => ({
+          ...mutation,
+          revision: mutation.baseRevision + 1,
+          changedAt,
+          originDeviceId: envelope.deviceId,
+          operationId: mutation.opId,
+        })),
+        nextCursor: 'c1',
+        hasMore: false,
+        serverTime: changedAt,
+      }),
     })
   })
   await page.addInitScript(
-    ({ storageKey, seed, failStorage, skipSplash }) => {
+    ({ storageKey, seed, failStorage, skipSplash, syncToken, rootKey }) => {
       if (skipSplash) sessionStorage.setItem('daylight-splash-seen', '1')
       if (seed) localStorage.setItem(storageKey, JSON.stringify(seed))
+      localStorage.setItem('daylight-journal-api-token', syncToken)
+      localStorage.setItem('daylight-journal-sync-root-v1', rootKey)
       if (failStorage) {
         Storage.prototype.setItem = () => {
           throw new DOMException('full', 'QuotaExceededError')
         }
       }
     },
-    { storageKey, seed, failStorage, skipSplash },
+    { storageKey, seed, failStorage, skipSplash, syncToken, rootKey },
   )
   await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
   try {
@@ -147,7 +186,8 @@ try {
       '图片处理中继续输入也不能被覆盖',
     )
     await page.waitForTimeout(700)
-    assert(requests.flat().some((entry) => entry.content === '图片处理中继续输入也不能被覆盖'))
+    assert(requests.some((request) => request.mutations.length > 0))
+    assert(requests.every((request) => !JSON.stringify(request).includes('图片处理中继续输入也不能被覆盖')))
     await page.screenshot({
       path: path.join(artifactDir, 'desktop.png'),
       fullPage: true,
@@ -166,7 +206,7 @@ try {
       .click()
     await page.getByLabel('Journal 同步服务地址').fill('http://journal-host.local:8780')
     await page.getByLabel('Journal 同步服务配对令牌')
-      .fill('test-only-pairing-token-000000000000')
+      .fill(syncToken)
     await page.getByRole('button', { name: '保存', exact: true }).click()
     assert.deepEqual(
       await page.evaluate(() => ({
@@ -175,7 +215,7 @@ try {
       })),
       {
         url: 'http://journal-host.local:8780',
-        token: 'test-only-pairing-token-000000000000',
+        token: syncToken,
       },
     )
     await page.screenshot({
