@@ -11,12 +11,19 @@ import {
 import { JournalStore } from '../journal-store.mjs'
 import { AuditLogger } from './audit.mjs'
 import { JournalHealth } from './health.mjs'
+import { createPairingRouter } from './pairing.mjs'
 import { registerJournalResources } from './resources.mjs'
 import { getSettings } from './settings.mjs'
 import { registerJournalTools } from './tools.mjs'
+import { trace } from './trace.mjs'
 
 export function createMcpServer(store, audit, health, version) {
-  const server = new McpServer({ name: 'Journal MCP', version })
+  const server = new McpServer(
+    { name: 'Journal MCP', version },
+    {
+      instructions: '查看或复盘日记时，先用 journal_list_recent 或 journal_search 定位记录，再对每篇调用 journal_get_entry 读取正文。若 contentComplete 为 false，必须用 nextOffset 继续调用，直到正文读取完成；不要只依据列表摘要分析。',
+    },
+  )
   registerJournalTools(server, store, audit, health)
   registerJournalResources(server, store, audit, health)
   return server
@@ -25,6 +32,19 @@ export function createMcpServer(store, audit, health, version) {
 function configureHttpApp(app) {
   app.disable('x-powered-by')
   app.use(express.json({ limit: '4mb' }))
+  app.use((req, res, next) => {
+    const origin = req.headers.origin || ''
+    const trustedLocalOrigin = origin === 'https://localhost' ||
+      origin === 'capacitor://localhost' ||
+      /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(origin)
+    if (
+      trustedLocalOrigin &&
+      req.headers['access-control-request-private-network'] === 'true'
+    ) {
+      res.setHeader('Access-Control-Allow-Private-Network', 'true')
+    }
+    next()
+  })
   app.use(cors({ origin: true, exposedHeaders: ['Mcp-Session-Id'] }))
 }
 
@@ -51,6 +71,23 @@ function registerOAuthDiscoveryRoutes(app) {
   })
 }
 
+function registerJsonErrorHandler(app) {
+  // Express 5's fallback handler echoes the full stack (with install paths)
+  // to the client; keep body-parser and route failures to fixed JSON shapes.
+  app.use((error, _req, res, _next) => {
+    if (res.headersSent) return
+    const clientFault = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
+    res.status(clientFault ? error.status : 500).json({
+      error: {
+        code: clientFault ? 'INVALID_REQUEST' : 'INTERNAL',
+        message: clientFault ? 'Request body is invalid' : 'Journal internal error',
+        retryable: !clientFault,
+        details: {},
+      },
+    })
+  })
+}
+
 function registerBusinessRoutes(app, store, apiToken) {
   app.use('/v1', createJournalApiRouter(store, apiToken))
   app.use('/journal', createBearerAuth(apiToken))
@@ -61,18 +98,23 @@ function registerBusinessRoutes(app, store, apiToken) {
   })
 }
 
-export function createJournalSyncApp(store, apiToken) {
+export function createJournalSyncApp(store, apiToken, dataDir) {
   const app = express()
   configureHttpApp(app)
   app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'Journal Sync API' }))
+  app.use('/pairing', createPairingRouter(dataDir, apiToken))
   registerBusinessRoutes(app, store, apiToken)
+  registerJsonErrorHandler(app)
   return app
 }
 
 export async function createJournalApp(settings = getSettings()) {
   const store = new JournalStore(settings.dataDir)
+  trace('store-initialize')
   await store.initialize()
+  trace('store-initialized')
   const apiToken = await loadOrCreateApiToken(settings.dataDir)
+  trace('token-ready')
   const audit = new AuditLogger(settings.auditFile)
   const health = new JournalHealth(settings.version)
   const app = express()
@@ -118,28 +160,33 @@ export async function createJournalApp(settings = getSettings()) {
   })
   app.get('/mcp', (_req, res) => res.status(405).json({ error: 'Use POST for MCP requests' }))
   app.delete('/mcp', (_req, res) => res.status(405).json({ error: 'Stateless MCP sessions cannot be deleted' }))
+  registerJsonErrorHandler(app)
 
   return { app, store, audit, health, apiToken, settings }
 }
 
 export async function startJournalServer(settings = getSettings()) {
   const runtime = await createJournalApp(settings)
+  trace('app-created')
   const server = await new Promise((resolve, reject) => {
     const listener = runtime.app.listen(settings.port, settings.host, () => resolve(listener))
     listener.once('error', reject)
   })
+  trace('mcp-listening')
   let syncServer = null
   let bonjour = null
   let advertisement = null
   if (settings.syncHost) {
-    const syncApp = createJournalSyncApp(runtime.store, runtime.apiToken)
+    const syncApp = createJournalSyncApp(runtime.store, runtime.apiToken, settings.dataDir)
     syncServer = await new Promise((resolve, reject) => {
       const listener = syncApp.listen(settings.syncPort, settings.syncHost, () => resolve(listener))
       listener.once('error', reject)
     })
+    trace('sync-listening')
     const syncAddress = syncServer.address()
     const syncPort = typeof syncAddress === 'object' && syncAddress ? syncAddress.port : settings.syncPort
     const service = await runtime.store.initialize()
+    trace('mdns-init')
     bonjour = new Bonjour()
     advertisement = bonjour.publish({
       name: `Journal-${service.serviceId.slice(-8)}`,
@@ -148,9 +195,11 @@ export async function startJournalServer(settings = getSettings()) {
       port: syncPort,
       txt: { serviceId: service.serviceId, apiVersion: '1' },
     })
+    trace('mdns-published')
   }
   runtime.health.ready = true
   await runtime.audit.record({ event: 'service_started', outcome: 'success' })
+  trace('service-ready')
   return { ...runtime, server, syncServer, bonjour, advertisement }
 }
 

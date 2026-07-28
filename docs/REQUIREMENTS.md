@@ -28,7 +28,10 @@
 | FR-013 | 独立 Journal MCP | 业务逻辑与 MCP 协议分层；提供状态、查询、创建、追加、元数据更新及完整正文 Resource | 已完成 |
 | FR-014 | 安全幂等写入 | 写操作要求 UUID `requestId`、`expectedRevision`，重复请求重放且重启后仍有效 | 已完成 |
 | FR-015 | 独立安全链路 | `PoyiJournalMcp`、`PoyiJournalTunnel` 和 ChatGPT 应用独立运行，不依赖统一 Gateway | 已完成；真实读写、Resource、重放与重启恢复已验证 |
-| FR-016 | 手机稳定配对 | LAN API 用 mDNS、稳定 serviceId 和独立配对令牌发现；不依赖 ADB 或固定 IP | 已完成 |
+| FR-016 | 手机稳定配对 | 自动发现 LAN 服务；电脑端生成 6 位、5 分钟、单次使用的配对码，手机兑换后安全保存长期令牌；不依赖 ADB、固定 IP 或手工搬运令牌 | 已完成 |
+| FR-017 | 端到端加密云同步 | 客户端使用显式共享根密钥、稳定 opId、严格 cursor、持久 outbox/conflict/tombstone；云端只持有密文与最小完整性元数据 | 本地实现完成；待 staging/真实设备验收 |
+| FR-018 | 加密封面对象 | 封面不进入实体 ciphertext 或 exchange JSON；对象密文先经独立 PUT 校验后提交 manifest，拉取时校验 header、长度、SHA-256、AAD 后解密；ACK 后原子清理本地对象队列 | 本地实现完成；待 R2 staging/真实设备验收 |
+| FR-019 | 加密空间恢复 | 第一台设备显式初始化；后续设备只能用 PBKDF2 恢复包或十分钟、单次、绑定 deviceId/public key/nonce 的设备批准获得同一根密钥 | 本地实现完成；待真实双设备验收 |
 
 ## 非功能需求
 
@@ -40,9 +43,11 @@
 | NFR-004 | 可访问性 | 关键目标至少 44px、焦点可见、表单有名称、减少动效模式可用 |
 | NFR-005 | 兼容性 | Web/PWA 与 Capacitor Android 共用数据模型和主要交互 |
 | NFR-006 | 可维护性 | 需求、架构、接口、Bug、变更和视觉决策各有唯一文档归属 |
-| NFR-007 | 数据隔离 | MCP 仅监听 `127.0.0.1:8780`；LAN 8781 仅有认证业务 API；完整正文仅由 MCP Resource 返回 |
+| NFR-007 | 数据隔离 | MCP 仅监听 `127.0.0.1:8780`；LAN 8781 仅有认证业务 API；完整正文仅经 loopback MCP（工具分页与 Resource）返回 |
 | NFR-008 | 凭据与日志 | API 使用仓库外随机令牌；Tunnel key 用 DPAPI；日志不含正文、标题、标签、图片或令牌 |
 | NFR-009 | 后台恢复 | 两个 Windows 服务自动启动、失败重启；任一 Journal 服务异常不影响其他项目服务 |
+| NFR-010 | 云同步故障恢复 | 对象已上传但 exchange 失败、页面重启或网络恢复后必须重放同一 opId/objectKey；ACK 与实体/cursor/outbox/object 清理处于同一 IndexedDB 提交边界 |
+| NFR-011 | 云端最小知情 | D1/R2、exchange、日志和 MCP 不得出现正文、标题、标签、封面 data URL、root key、恢复短语或设备 token；对象只保存 AES-GCM 密文和校验 manifest |
 
 ## 明确不做
 
@@ -50,6 +55,8 @@
 - 不做社交发布、账号系统、复杂富文本或自动改写原文。
 - 不做 Obsidian 双向写入；当前只提供 Markdown 导出。
 - 不宣称当前同步支持 block 级实时协作或无冲突合并。
+- 在 staging revision、真实设备恢复和三轮 PC-off 验收完成前，不宣称云 V2 已正式可用或
+  `supportsPcOff=true`。
 
 ## 需求变更流程
 

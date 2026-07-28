@@ -49,8 +49,10 @@ MCP 服务提供 `GET /healthz`、`GET /readyz`、`GET /metrics`。8781 只提�
 - `/v1/*`：独立随机 Bearer token，首次启动生成到运行数据目录；匿名请求返回 401。
 - `/mcp`：只监听 loopback，由独立 Secure MCP Tunnel 和 OpenAI tunnel/runtime key 保护，
   不直接暴露公网。
-- 手机/平板：使用 mDNS 发现的稳定 serviceId/端口和同一独立随机配对令牌；不使用 ADB
-  转发或固定 IP。token 只保存在应用本地存储的密码配置中。
+- 手机/平板：自动发现 LAN 服务后，使用管理员窗口显示的 6 位一次性码兑换独立随机令牌；
+  不使用 ADB、固定 IP 或手工搬运长期 token。token 只保存在应用本地密码字段中。
+- 一次性码：明文仅在管理员窗口显示，服务目录只保存带盐摘要；5 分钟过期、最多 5 次、
+  成功即作废。`/pairing/exchange` 只存在于 LAN `8781`，不进入 MCP/Tunnel。
 - Tunnel runtime key：LocalMachine DPAPI 加密，仅 Administrators 和
   `NT SERVICE\PoyiJournalTunnel` 可读密文文件。
 - Journal MCP 账户：只对安装目录有 RX、对 Journal 数据目录有 M。
@@ -75,10 +77,11 @@ MCP 工具：
 - `journal_append_entry`
 - `journal_update_entry`
 
-Resource：`journal://entries/{date}`。`journal_get_entry` 的普通文本与 `structuredContent`
-只返回元数据、`resourceIncluded` 和正文长度，完整正文放在标准 MCP Resource 内容块中；
-服务同时保留 `resources/read` 模板契约。所有写工具要求 UUID `requestId` 和
-`expectedRevision`。Journal 没有控制命令，capabilities 中 `controlCommands` 是空数组。
+Resource：`journal://entries/{date}`。`journal_get_entry` 按 `offset`/`maxChars` 在普通文本与
+`structuredContent` 中分页返回正文（`contentChunk`/`contentComplete`/`nextOffset`），
+并以 `resource_link` 指向权威 Resource；服务同时保留 `resources/read` 模板契约。
+所有写工具要求 UUID `requestId` 和 `expectedRevision`。Journal 没有控制命令，
+capabilities 中 `controlCommands` 是空数组。
 
 ## 安装和升级
 
@@ -88,6 +91,7 @@ Resource：`journal://entries/{date}`。`journal_get_entry` 的普通文本与 `
 .\mcp\service\install.ps1
 .\mcp\service\status.ps1
 .\mcp\service\verify.ps1
+.\mcp\service\verify-pairing.ps1
 
 # Tunnel 必须使用新建的 Journal 专用 tunnel ID 和 runtime API key。
 $key = Read-Host 'Journal Tunnel runtime API key' -AsSecureString
@@ -98,6 +102,20 @@ $key = Read-Host 'Journal Tunnel runtime API key' -AsSecureString
 
 升级顺序：先测试源码，再更新 MCP 服务，确认 8780 ready 后更新 Tunnel。卸载只使用
 Journal 的卸载脚本；禁止调用 PersonalMcpGateway 或其他项目的 WinSW 可执行文件。
+
+安装后，Windows 开始菜单会出现“拾光手机配对”。打开后确认 UAC，窗口只显示 6 位短时码；
+手机设置页先“发现电脑”，再输入该码即可。重新配对会使上一个尚未使用的短时码立即失效，
+不会轮换现有长期 token，也不会让已配对设备掉线。
+
+安装脚本会把 8780/8781（MCP）与 8887（Tunnel 健康）登记为 Windows 管理员保留端口段，
+防止 WinNAT 动态排除段漂移吞掉端口（特权 bind 会“成功”但无监听，见 BUG-019）。检查：
+
+```powershell
+netsh int ipv4 show excludedportrange protocol=tcp
+```
+
+三个端口必须显示为带 `*` 的管理员段；若被无 `*` 的动态段覆盖，重跑对应 install 脚本
+（verify.ps1 也会在该状态下前置失败并给出指引）。
 
 ## 验收命令
 
@@ -129,7 +147,8 @@ Node 24 上若 Inspector 在打印成功响应后因已知上游退出断言返�
 
 1. Tunnel doctor/ready 均通过后，在 ChatGPT 创建独立“拾光日记”应用并绑定 Journal Tunnel。
 2. 调用 `journal_get_status` 和 `journal_list_recent`，确认只访问 Journal。
-3. 调用 `journal_get_entry` 后读取其 `journal://entries/{date}`，确认 Resource 可读。
+3. 调用 `journal_get_entry` 读取正文分块；若 `contentComplete` 为 false，用 `nextOffset`
+   续读直到完成，确认 ChatGPT 能取得完整正文而非仅摘要。
 4. 用新 requestId 和当前 revision 做一次显式元数据更新；优先把值更新为原值，避免改变正文。
 5. 原样重复同一 requestId，结果必须 `replayed: true` 且 revision 不再次增加。
 6. 重启 `PoyiJournalMcp` 后再重复 requestId，仍必须重放。

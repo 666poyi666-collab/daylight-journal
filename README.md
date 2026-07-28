@@ -2,13 +2,16 @@
 
 拾光是一个面向个人使用的跨端日记工作台：网页、Android 手机和平板共用一套日记数据，并通过 MCP 让 ChatGPT 在「日记」项目中完成复盘。
 
-当前阶段优先保证三件事：记录足够顺手、跨端同步可靠、AI 读取路径清晰。前端已完成 Editorial Paper 视觉重构，设计与响应式约束见 [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)。
+当前阶段优先保证三件事：记录足够顺手、跨端同步可靠、AI 读取路径清晰。前端视觉为 Ink & Daylight（暖纸墨色 + 单一赭金强调色 + 发丝线分层），设计与响应式约束见 [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)。
 
 ## 当前能力
 
 - 今日记录、历史记录、日历、标题、可排序记录片、分次写作时间、心情和标签
 - 自动保存到本地 localStorage
-- 手机、平板、网页通过同步服务合并日记
+- 可选应用锁：4–6 位数字密码本机哈希存储，防翻看；不加密数据、不上传密码
+- 书写字体可选衬线/黑体：衬线为默认，中文衬线子集随应用打包，手机离线同样生效
+- 手机、平板、网页具备 `SyncEnvelopeV1` 端到端加密同步客户端：正文与元数据使用
+  AES-256-GCM，封面作为独立加密对象上传，不进入 exchange JSON
 - ChatGPT 自定义连接器「拾光日记」
 - 独立 Journal MCP：7 个 `journal_*` 工具和按日期读取完整正文的 Resource
 - 点击 AI 复盘时固定打开 ChatGPT「日记」项目，并复制复盘提示词
@@ -62,8 +65,16 @@ npm run mcp
 
 桌面本地同步接口：`http://127.0.0.1:8780/journal/*`
 
-手机/平板同步：通过设置页保存 mDNS 地址（`http://<host>.local:8781`）和独立配对令牌；
-LAN listener 不提供 `/mcp`，不依赖 ADB 或固定 IP。
+手机/平板同步：Android 设置页通过原生 mDNS/NSD（不兼容时回退同网段探活）发现电脑的
+LAN `8781` 地址，再输入电脑端一次性显示的 6 位配对码；应用兑换并保存独立令牌，用户无需搬运长期凭据。
+LAN listener 不提供 `/mcp`，不依赖 ADB 或手填固定 IP。当前共享副本仍运行
+在这台电脑上，电脑关机时不能同步；ChatGPT 使用的 Secure MCP Tunnel 不是手机云同步后端。
+
+仓库内同时提供可选的云端 V2 数据面：客户端把实体密文和持久 outbox 放在 IndexedDB，
+封面密文经独立对象路由进入 R2，D1 只保存密文、revision、tombstone、cursor 与 manifest。
+首次启用必须显式初始化新加密空间，或导入恢复包/设备批准包；不会为新设备自动生成另一把根密钥。
+该链路当前仅完成本地合同与故障回归，尚无 staging revision、真实设备三轮 PC-off 或正式灰度证据，
+因此项目仍不得标记为 `supportsPcOff=true`。
 
 MCP 接口：`http://127.0.0.1:8780/mcp`
 
@@ -83,7 +94,7 @@ Tunnel，MCP 不直接暴露公网，也不依赖 PersonalMcpGateway。安装、
 - [`docs/AI-CODING-GUIDE.md`](docs/AI-CODING-GUIDE.md)：AI coding 工作流、日志和验收规则
 - [`docs/BUGS.md`](docs/BUGS.md)：已知问题、修复记录与 Bug 模板
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md)：按版本维护的开发变更日志
-- [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)：Soft Tech 视觉方向与前端重构约束
+- [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)：Ink & Daylight 视觉方向与响应式约束
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)：阶段计划与暂不做事项
 
 ## 目录约定
@@ -99,4 +110,5 @@ data/                MCP 服务运行数据（本地生成，不提交隐私内�
 docs/                项目文档与治理规则
 ```
 
-数据默认保存在浏览器本地，并同步到服务端 `data/journals.json`。不要把真实日记提交到 Git。
+默认本地链路仍把浏览器数据同步到电脑端 `data/journals.json`；云 V2 链路启用后，业务明文只在
+已授权设备解密，D1/R2 不保存正文或封面原文。不要把真实日记、恢复包或设备 token 提交到 Git。

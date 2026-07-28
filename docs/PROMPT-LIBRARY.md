@@ -35,7 +35,7 @@
 
 **用途**：从单日复盘升级为有证据边界的长期个人复盘。
 
-**前置上下文**：先调用 `journal_get_entry` 取得指定日期的 Resource URI 并读取 Resource，再调用 `journal_list_recent` 获取近期脉络。复盘流程只读。
+**前置上下文**：先调用 `journal_get_entry` 分页读取指定日期完整正文（`contentComplete` 为 false 时用 `nextOffset` 续读），再调用 `journal_list_recent` 获取近期脉络，需要对照的日期同样读完正文；不允许只依据列表摘要复盘。复盘流程只读。
 
 **预期输出**：今日全景、行动与选择、情绪轨迹、具体优势、阻力与盲点、长期模式、未完成事项、下一步、长期记忆更新候选，以及值得继续思考的问题。
 

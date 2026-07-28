@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import {
   CalendarRange,
   Check,
@@ -16,6 +17,7 @@ import {
   addMonths,
   addDays,
   format,
+  getDayOfYear,
   parseISO,
   startOfMonth,
   subMonths,
@@ -27,13 +29,23 @@ import { useTodayKey } from './hooks/useTodayKey.ts'
 import { CalendarPage } from './pages/CalendarPage.tsx'
 import { EditorPage } from './pages/EditorPage.tsx'
 import { HistoryPage } from './pages/HistoryPage.tsx'
+import { LockScreen } from './pages/LockScreen.tsx'
 import { SettingsPage } from './pages/SettingsPage.tsx'
 import {
+  LOCK_STORAGE_KEY,
+  createLockRecord,
+  decodeLockRecord,
+  isLockSupported,
+  isPinFormat,
+  verifyPin,
+  type LockRecord,
+} from './journal/lock.ts'
+import {
   applyEntryPatch,
-  decodeJournalEntries,
   emptyEntry,
   hasEntryContent,
   hasReviewableText,
+  journalPreviewText,
   mergeEntries,
   type JournalEntries,
   type JournalEntry,
@@ -48,8 +60,25 @@ import {
   type StorageIssue,
 } from './journal/storage.ts'
 import type { SaveState, SyncState } from './journal/status.ts'
+import {
+  acceptJournalDeviceApprovalPackage,
+  createJournalDeviceApprovalPackage,
+  createJournalRecoveryPackage,
+  importJournalRecoveryPackage,
+  initializeJournalSyncRoot,
+  journalDeviceApprovalIdentity,
+  journalSyncRootReady,
+  syncEncryptedJournal,
+} from './journal/encryptedSync.ts'
+import {
+  isJournalDeviceToken,
+  loadJournalSyncCredential,
+  normalizeJournalSyncEndpoint,
+  removeLegacyJournalSyncToken,
+  saveJournalSyncCredential,
+} from './journal/syncCredentials.ts'
 import { buildReviewPrompt } from './journal/review.ts'
-import './editorial-ui.css'
+import './journal-ui.css'
 
 type View = 'today' | 'calendar' | 'history' | 'settings'
 
@@ -62,6 +91,17 @@ const DEFAULT_JOURNAL_API =
 const CHATGPT_PROJECT_URL =
   import.meta.env.VITE_CHATGPT_PROJECT_URL || 'https://chatgpt.com/'
 const SPLASH_SESSION_KEY = 'daylight-splash-seen'
+const RELOCK_GRACE_MS = 30_000
+
+/* 开屏语按日轮换：小小的个性，不需要任何配置。 */
+const splashQuotes = [
+  '记录此刻，看见自己',
+  '写下来，就是对时间温柔的抵抗',
+  '一天很短，一段话刚刚好',
+  '诚实一点，今天值得被看见',
+  '慢慢写，光会落在纸上',
+  '今天的一小段，是未来的一整页',
+]
 
 function safeHttpUrl(value: string): string | null {
   try {
@@ -72,6 +112,22 @@ function safeHttpUrl(value: string): string | null {
   } catch {
     return null
   }
+}
+
+type SyncIssue = 'unpaired' | 'key' | 'auth' | 'server' | 'network'
+
+/** 把同步失败归类，供状态栏给出可行动的提示：未配对/令牌被拒引导去设置页。 */
+function classifySyncIssue(error: unknown): SyncIssue {
+  const message = error instanceof Error ? error.message : ''
+  if (/not paired|device token|device identity/i.test(message)) return 'unpaired'
+  if (/root key|encrypted space/i.test(message)) return 'key'
+  const status = /failed: (\d+)/.exec(message)?.[1]
+  if (status === '401' || status === '403') return 'auth'
+  if (status) return 'server'
+  const paired = Boolean(
+    import.meta.env.VITE_JOURNAL_API_URL || readStorageValue(JOURNAL_API_URL_KEY),
+  )
+  return paired ? 'network' : 'unpaired'
 }
 
 const navItems = [
@@ -90,7 +146,7 @@ interface ViewScrollPosition {
 function App() {
   const todayKey = useTodayKey()
   const compactNavigation = useMediaQuery(
-    '(max-width: 699px), (orientation: landscape) and (max-width: 820px)',
+    '(max-width: 699px), (orientation: landscape) and (max-width: 820px), (orientation: landscape) and (max-height: 520px)',
   )
   const [initialLoad] = useState(loadJournalEntries)
   const [view, setView] = useState<View>('today')
@@ -109,6 +165,15 @@ function App() {
   const [dark, setDark] = useState(
     () => readStorageValue('daylight-theme') === 'dark',
   )
+  const [writeFont, setWriteFont] = useState<'serif' | 'sans'>(() =>
+    readStorageValue('daylight-write-font') === 'sans' ? 'sans' : 'serif',
+  )
+  const [lockRecord, setLockRecord] = useState<LockRecord | null>(() =>
+    decodeLockRecord(readStorageValue(LOCK_STORAGE_KEY)),
+  )
+  const [locked, setLocked] = useState(() =>
+    Boolean(decodeLockRecord(readStorageValue(LOCK_STORAGE_KEY))),
+  )
   const [saveState, setSaveState] = useState<SaveState>(
     initialLoad.issue ? 'error' : 'saved',
   )
@@ -116,10 +181,11 @@ function App() {
     initialLoad.issue,
   )
   const [syncState, setSyncState] = useState<SyncState>('syncing')
+  const [syncIssue, setSyncIssue] = useState<SyncIssue | null>(null)
   const [journalApiUrl, setJournalApiUrl] = useState(DEFAULT_JOURNAL_API)
-  const [journalApiToken, setJournalApiToken] = useState(
-    () => readStorageValue(JOURNAL_API_TOKEN_KEY) || '',
-  )
+  const [journalApiToken, setJournalApiToken] = useState('')
+  const [credentialReady, setCredentialReady] = useState(false)
+  const [syncRootReady, setSyncRootReady] = useState(false)
   const [reviewLaunched, setReviewLaunched] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [chatGptUrl, setChatGptUrl] = useState(() => {
@@ -147,6 +213,45 @@ function App() {
   const previousTodayRef = useRef(todayKey)
   const scrollPositionsRef = useRef(new Map<View, ViewScrollPosition>())
   const pendingScrollRestoreRef = useRef<{ view: View; reset: boolean } | null>(null)
+  const hiddenAtRef = useRef(0)
+  const lockRecordRef = useRef(lockRecord)
+  lockRecordRef.current = lockRecord
+
+  useEffect(() => {
+    let active = true
+    const restoreCredential = async () => {
+      try {
+        let credential = await loadJournalSyncCredential()
+        if (!credential) {
+          const legacyToken = readStorageValue(JOURNAL_API_TOKEN_KEY)
+          const legacyEndpoint = readStorageValue(JOURNAL_API_URL_KEY)
+          if (legacyToken) {
+            try {
+              const normalizedEndpoint = legacyEndpoint
+                ? normalizeJournalSyncEndpoint(legacyEndpoint)
+                : null
+              if (normalizedEndpoint && isJournalDeviceToken(legacyToken)) {
+                credential = await saveJournalSyncCredential(normalizedEndpoint, legacyToken)
+              }
+            } finally {
+              removeLegacyJournalSyncToken(JOURNAL_API_TOKEN_KEY)
+            }
+          }
+        }
+        if (active && credential) {
+          setJournalApiUrl(credential.endpoint)
+          setJournalApiToken(credential.deviceToken)
+          setSyncRootReady(await journalSyncRootReady(credential.deviceToken))
+        }
+      } catch {
+        // Leave sync unpaired rather than falling back to a plaintext credential.
+      } finally {
+        if (active) setCredentialReady(true)
+      }
+    }
+    void restoreCredential()
+    return () => { active = false }
+  }, [])
 
   const entry = entries[selectedDate] || emptyEntry(selectedDate)
   const hasCurrentEntry = hasEntryContent(entry)
@@ -180,7 +285,7 @@ function App() {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const timer = window.setTimeout(
       () => setSplashVisible(false),
-      reduceMotion ? 140 : 1080,
+      reduceMotion ? 140 : 1260,
     )
     return () => window.clearTimeout(timer)
   }, [splashVisible])
@@ -232,8 +337,91 @@ function App() {
     writeStorageValue('daylight-theme', dark ? 'dark' : 'light')
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', dark ? '#111813' : '#526f5c')
+      ?.setAttribute('content', dark ? '#131211' : '#f7f4ed')
   }, [dark]);
+
+  useEffect(() => {
+    document.documentElement.dataset.writeFont = writeFont
+    writeStorageValue('daylight-write-font', writeFont)
+  }, [writeFont])
+
+  /** 主题切换用 View Transitions 做一次整页交叉淡化；不支持或减少动效时直接切。 */
+  const toggleDark = useCallback(() => {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!document.startViewTransition || reduceMotion) {
+      setDark((value) => !value)
+      return
+    }
+    document.startViewTransition(() => {
+      flushSync(() => setDark((value) => !value))
+    })
+  }, [])
+
+  /* 应用锁：切到后台超过宽限期，回来时重新锁定。 */
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (!lockRecordRef.current) return
+      if (document.visibilityState === 'hidden') {
+        hiddenAtRef.current = Date.now()
+        return
+      }
+      if (
+        hiddenAtRef.current &&
+        Date.now() - hiddenAtRef.current > RELOCK_GRACE_MS
+      ) {
+        setLocked(true)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () =>
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [])
+
+  const enableLock = useCallback(
+    async (pin: string): Promise<'ok' | 'invalid' | 'unsupported' | 'storage'> => {
+      if (!isPinFormat(pin)) return 'invalid'
+      if (!isLockSupported()) return 'unsupported'
+      const record = await createLockRecord(pin)
+      const result = writeStorageValue(LOCK_STORAGE_KEY, JSON.stringify(record))
+      if (!result.ok) {
+        setStorageIssue(result.issue)
+        return 'storage'
+      }
+      setLockRecord(record)
+      return 'ok'
+    },
+    [],
+  )
+
+  const disableLock = useCallback(
+    async (pin: string): Promise<boolean> => {
+      const record = lockRecordRef.current
+      if (!record) return true
+      if (!(await verifyPin(record, pin))) return false
+      try {
+        localStorage.removeItem(LOCK_STORAGE_KEY)
+      } catch {
+        // 移除失败时保持已解锁状态即可；下次启动仍会要求密码。
+      }
+      setLockRecord(null)
+      setLocked(false)
+      return true
+    },
+    [],
+  )
+
+  const changeLock = useCallback(
+    async (
+      currentPin: string,
+      nextPin: string,
+    ): Promise<'ok' | 'wrong' | 'invalid' | 'unsupported' | 'storage'> => {
+      const record = lockRecordRef.current
+      if (!record) return 'wrong'
+      if (!(await verifyPin(record, currentPin))) return 'wrong'
+      return enableLock(nextPin)
+    },
+    [enableLock],
+  )
 
   const persistSnapshot = useCallback((snapshot: JournalEntries) => {
     if (recoveryRawRef.current) {
@@ -254,42 +442,44 @@ function App() {
       const run = pushChain.current
         .catch(() => false)
         .then(async () => {
-          const payload = Object.values(snapshot).filter(hasEntryContent)
           setSyncState('syncing')
-          if (!payload.length) {
-            if (revision >= syncedRevisionRef.current) {
-              syncedRevisionRef.current = revision
-            }
-            if (revision === revisionRef.current) setSyncState('synced')
-            return true
-          }
           try {
-            const response = await fetch(`${journalApiUrl}/journal/sync`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(journalApiToken
-                  ? { Authorization: `Bearer ${journalApiToken}` }
-                  : {}),
-              },
-              body: JSON.stringify(payload),
+            const result = await syncEncryptedJournal({
+              endpoint: journalApiUrl,
+              deviceToken: journalApiToken,
+              entries: snapshot,
             })
-            if (!response.ok) throw new Error(`Sync failed: ${response.status}`)
+            const materialized = revision === revisionRef.current
+              ? result.entries
+              : mergeEntries(entriesRef.current, result.entries)
+            if (JSON.stringify(materialized) !== JSON.stringify(entriesRef.current)) {
+              entriesRef.current = materialized
+              setEntries(materialized)
+              revisionRef.current += 1
+              const persisted = persistSnapshot(materialized)
+              setSaveState(persisted.ok ? 'saved' : 'error')
+            }
             syncedRevisionRef.current = Math.max(
               syncedRevisionRef.current,
               revision,
             )
-            if (revision === revisionRef.current) setSyncState('synced')
+            if (revision === revisionRef.current) {
+              setSyncState('synced')
+              setSyncIssue(null)
+            }
             return true
-          } catch {
-            if (revision === revisionRef.current) setSyncState('offline')
+          } catch (error) {
+            if (revision === revisionRef.current) {
+              setSyncState('offline')
+              setSyncIssue(classifySyncIssue(error))
+            }
             return false
           }
         })
       pushChain.current = run
       return run
     },
-    [journalApiToken, journalApiUrl],
+    [journalApiToken, journalApiUrl, persistSnapshot],
   )
 
   useEffect(() => {
@@ -308,29 +498,25 @@ function App() {
   }, [pushEntries])
 
   const synchronize = useCallback(async (): Promise<boolean> => {
+    if (!credentialReady) return false
+    if (!journalApiToken) {
+      setSyncState('offline')
+      setSyncIssue('unpaired')
+      return false
+    }
+    if (!syncRootReady) {
+      setSyncState('offline')
+      setSyncIssue('key')
+      return false
+    }
     if (syncInFlight.current) return syncInFlight.current
     const run = (async () => {
       setSyncState('syncing')
       try {
-        const response = await fetch(`${journalApiUrl}/journal/all`, {
-          headers: journalApiToken
-            ? { Authorization: `Bearer ${journalApiToken}` }
-            : {},
-        })
-        if (!response.ok) throw new Error(`Pull failed: ${response.status}`)
-        const remote = await response.json()
-        const decoded = decodeJournalEntries(remote)
-        if (decoded.invalidRoot) throw new Error('Invalid remote journal data')
-        const merged = mergeEntries(entriesRef.current, decoded.entries)
-        entriesRef.current = merged
-        revisionRef.current += 1
-        setEntries(merged)
-        const persisted = persistSnapshot(merged)
-        if (!persisted.ok) setSaveState('error')
-        else setSaveState('saved')
         return await flushLatestEntries()
-      } catch {
+      } catch (error) {
         setSyncState('offline')
+        setSyncIssue(classifySyncIssue(error))
         return false
       }
     })()
@@ -340,9 +526,10 @@ function App() {
     } finally {
       syncInFlight.current = null
     }
-  }, [flushLatestEntries, journalApiToken, journalApiUrl, persistSnapshot])
+  }, [credentialReady, flushLatestEntries, journalApiToken, syncRootReady])
 
   useEffect(() => {
+    if (!credentialReady) return
     void synchronize();
     const retry = () => void synchronize();
     const resume = () => {
@@ -358,7 +545,7 @@ function App() {
       window.removeEventListener("online", retry);
       document.removeEventListener("visibilitychange", resume);
     };
-  }, [synchronize]);
+  }, [credentialReady, synchronize]);
 
   useEffect(() => {
     return () => {
@@ -538,25 +725,38 @@ function App() {
     return { currentMonthCount, totalWordCount, currentStreak }
   }, [entries, sortedEntries, todayKey])
 
+  const splash = splashVisible && (
+    <button
+      className="product-splash"
+      type="button"
+      onClick={() => setSplashVisible(false)}
+      aria-label="跳过启动动画"
+    >
+      <span className="product-splash-mark" aria-hidden="true">
+        <img src="/icon-journal-sunrise.png" alt="" />
+        <i />
+      </span>
+      <strong>拾光</strong>
+      <small>DAYLIGHT JOURNAL</small>
+      <span className="product-splash-line" aria-hidden="true"><i /></span>
+      <em>{splashQuotes[getDayOfYear(new Date()) % splashQuotes.length]}</em>
+    </button>
+  )
+
+  if (lockRecord && locked) {
+    return (
+      <>
+        <i className="paper-grain" aria-hidden="true" />
+        {splash}
+        <LockScreen record={lockRecord} onUnlock={() => setLocked(false)} />
+      </>
+    )
+  }
+
   return (
     <>
-      {splashVisible && (
-        <button
-          className="product-splash"
-          type="button"
-          onClick={() => setSplashVisible(false)}
-          aria-label="跳过启动动画"
-        >
-          <span className="product-splash-mark" aria-hidden="true">
-            <img src="/icon-journal-sunrise.png" alt="" />
-            <i />
-          </span>
-          <strong>拾光</strong>
-          <small>DAYLIGHT JOURNAL</small>
-          <span className="product-splash-line" aria-hidden="true"><i /></span>
-          <em>记录此刻，看见自己</em>
-        </button>
-      )}
+      <i className="paper-grain" aria-hidden="true" />
+      {splash}
       <div className="app-shell">
         <aside
           ref={sidebarRef}
@@ -640,15 +840,16 @@ function App() {
                 className={
                   item.date === selectedDate && view === "today" ? "active" : ""
                 }
+                title={journalPreviewText(item.content).slice(0, 40) || undefined}
               >
-                <span className="recent-dot" />
-                <span>
-                  <strong>
-                    {item.title ||
-                      format(parseISO(item.date), "M月d日", { locale: zhCN })}
-                  </strong>
-                  <small>{item.content.slice(0, 18) || "一篇安静的记录"}</small>
-                </span>
+                <strong>
+                  {item.title ||
+                    format(parseISO(item.date), "M月d日", { locale: zhCN })}
+                </strong>
+                <i className="toc-leader" aria-hidden="true" />
+                <time dateTime={item.date}>
+                  {format(parseISO(item.date), "M/d")}
+                </time>
               </button>
             ))}
             {sortedEntries.length === 0 && (
@@ -668,7 +869,7 @@ function App() {
               设置
             </button>
             <button
-              onClick={() => setDark((value) => !value)}
+              onClick={toggleDark}
               aria-label={dark ? '切换到浅色模式' : '切换到深色模式'}
               aria-pressed={dark}
             >
@@ -720,15 +921,37 @@ function App() {
                         : "尚未保存到本机 · 请检查存储空间"}
                   </small>
                 ) : syncState === "offline" && saveState !== "saving" ? (
-                  <button
-                    className="sync-status offline retryable"
-                    onClick={() => void synchronize()}
-                    aria-live="polite"
-                    aria-label="重试同步"
-                    title="点击重试同步"
-                  >
-                    已保存到本机 · 点击重试
-                  </button>
+                  syncIssue === "unpaired" || syncIssue === "key" || syncIssue === "auth" ? (
+                    <button
+                      className={`sync-status retryable ${syncIssue === "auth" ? "offline" : "setup"}`}
+                      onClick={() => setView("settings")}
+                      aria-live="polite"
+                      aria-label="前往设置页配对同步服务"
+                      title="前往设置页配对同步服务"
+                    >
+                      {syncIssue === "auth"
+                        ? "配对令牌被拒 · 去设置配对"
+                        : syncIssue === "key"
+                          ? "加密空间未就绪 · 去设置恢复"
+                          : "仅保存在本机 · 可配对同步"}
+                    </button>
+                  ) : (
+                    <button
+                      className="sync-status offline retryable"
+                      onClick={() => void synchronize()}
+                      aria-live="polite"
+                      aria-label="重试同步"
+                      title={
+                        syncIssue === "server"
+                          ? "同步服务返回异常，点击重试"
+                          : "点击重试同步"
+                      }
+                    >
+                      {syncIssue === "server"
+                        ? "同步服务异常 · 点击重试"
+                        : "已保存到本机 · 点击重试"}
+                    </button>
+                  )
                 ) : (
                   <small
                     className={`sync-status ${saveState === "saving" ? "saving" : syncState}`}
@@ -745,7 +968,7 @@ function App() {
             <div className="topbar-actions">
               <button
                 className="icon-button"
-                onClick={() => setDark((value) => !value)}
+                onClick={toggleDark}
                 aria-label={dark ? '切换到浅色模式' : '切换到深色模式'}
                 aria-pressed={dark}
               >
@@ -835,30 +1058,77 @@ function App() {
             )}
             {view === "settings" && (
               <SettingsPage
+                writeFont={writeFont}
+                onWriteFont={setWriteFont}
+                lockEnabled={Boolean(lockRecord)}
+                onEnableLock={enableLock}
+                onDisableLock={disableLock}
+                onChangeLock={changeLock}
                 chatGptUrl={chatGptUrl}
                 defaultChatGptUrl={CHATGPT_PROJECT_URL}
                 journalApiUrl={journalApiUrl}
-                journalApiToken={journalApiToken}
+                syncConfigured={Boolean(journalApiToken)}
+                syncRootReady={syncRootReady}
                 syncState={syncState}
                 onCheckConnection={synchronize}
-                onSyncConfig={(url, token) => {
-                  const normalizedUrl = safeHttpUrl(url)
+                onSyncConfig={async (url, token) => {
+                  const normalizedUrl = normalizeJournalSyncEndpoint(url)
                   const normalizedToken = token.trim()
-                  if (!normalizedUrl || normalizedToken.length < 32) return false
-                  const normalizedServiceUrl = normalizedUrl.replace(/\/$/, '')
+                  if (!normalizedUrl || !isJournalDeviceToken(normalizedToken)) return false
+                  const normalizedServiceUrl = normalizedUrl
                   const urlResult = writeStorageValue(JOURNAL_API_URL_KEY, normalizedServiceUrl)
-                  const tokenResult = writeStorageValue(JOURNAL_API_TOKEN_KEY, normalizedToken)
                   if (!urlResult.ok) {
                     setStorageIssue(urlResult.issue)
                     return false
                   }
-                  if (!tokenResult.ok) {
-                    setStorageIssue(tokenResult.issue)
+                  try {
+                    await saveJournalSyncCredential(normalizedServiceUrl, normalizedToken)
+                  } catch {
+                    setStorageIssue('unavailable')
                     return false
                   }
                   setJournalApiUrl(normalizedServiceUrl)
                   setJournalApiToken(normalizedToken)
+                  const rootReady = await journalSyncRootReady(normalizedToken)
+                  setSyncRootReady(rootReady)
+                  setSyncState(rootReady ? 'syncing' : 'offline')
+                  setSyncIssue(rootReady ? null : 'key')
+                  setCredentialReady(true)
                   return true
+                }}
+                onInitializeSyncRoot={async () => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  const created = await initializeJournalSyncRoot(journalApiToken)
+                  setSyncRootReady(true)
+                  setSyncState('syncing')
+                  setSyncIssue(null)
+                  return created
+                }}
+                onCreateRecoveryPackage={async (secret) => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  return createJournalRecoveryPackage(secret)
+                }}
+                onImportRecoveryPackage={async (secret, value) => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  await importJournalRecoveryPackage(journalApiToken, secret, value)
+                  setSyncRootReady(true)
+                  setSyncState('syncing')
+                  setSyncIssue(null)
+                }}
+                onCreateApprovalIdentity={async () => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  return journalDeviceApprovalIdentity(journalApiToken)
+                }}
+                onCreateApprovalPackage={async (target) => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  return createJournalDeviceApprovalPackage(journalApiToken, target)
+                }}
+                onAcceptApprovalPackage={async (value) => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  await acceptJournalDeviceApprovalPackage(journalApiToken, value)
+                  setSyncRootReady(true)
+                  setSyncState('syncing')
+                  setSyncIssue(null)
                 }}
                 onChatGptUrl={(value) => {
                   setChatGptUrl(value)

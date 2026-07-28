@@ -20,17 +20,19 @@
 | [CONTEXT-MANAGEMENT](CONTEXT-MANAGEMENT.md) | 项目/模块/任务三级上下文 |
 | [COMPONENT-TEMPLATE](COMPONENT-TEMPLATE.md) | 组件文档与验收模板 |
 | [PROMPT-LIBRARY](PROMPT-LIBRARY.md) | 可复用 AI 提示词资产 |
-| [UX-VISUAL-DIRECTION](UX-VISUAL-DIRECTION.md) | 后续 Soft Tech 视觉设计约束 |
+| [UX-VISUAL-DIRECTION](UX-VISUAL-DIRECTION.md) | Ink & Daylight 视觉设计约束 |
 | [ROADMAP](ROADMAP.md) | 迭代顺序与技术债 |
 
-## 当前状态（2026-07-26）
+## 当前状态（2026-07-28）
 
 - 写日记、历史、日历、心情、标签、可选单图封面：可用
-- 手机/平板/网页同步：可用，使用 HTTPS 隧道
+- 手机/平板/网页同步：本地优先；云 V2 客户端、加密实体、持久 outbox、显式 root 恢复与
+  R2 封面对象链路已通过本地合同/故障/重启回归；尚未部署 staging，也没有真实设备三轮
+  PC-off 证据，所以产品状态仍为 partial、`supportsPcOff=false`
 - 独立 `PoyiJournalMcp`：本地安装、健康检查、故障自动恢复和 MCP 契约已验证
 - 独立 `PoyiJournalTunnel` 与 ChatGPT「拾光日记」应用：真实读写、Resource、重放和重启恢复已验收
 - Obsidian：目前提供 Markdown 导出，尚未做 Vault 双向同步
-- 前端视觉：Editorial Paper 第一版可用；已完成单一样式入口、页面层级和四档响应式无障碍重构
+- 前端视觉：Ink & Daylight 已落地；样式收敛为 `index.css` + `journal-ui.css` 两层，四档响应式与深浅色均已回归
 - 工程治理：需求基线、开发手册、Bug 台账和变更日志已建立
 
 ## 规则

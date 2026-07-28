@@ -22,6 +22,109 @@ const today = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit',
 }).format(new Date())
+const syncEndpoint = 'http://journal-host.local:8780'
+
+function createEncryptedRemote() {
+  return {
+    objects: new Map(),
+    changes: [],
+    revisions: new Map(),
+    operations: new Map(),
+  }
+}
+
+function objectHeaders(record, replayed = false) {
+  return {
+    'Cache-Control': 'private, no-store',
+    'Content-Type': 'application/octet-stream',
+    'X-Ciphertext-Sha256': record.ciphertextSha256,
+    'X-Ciphertext-Bytes': String(record.ciphertextBytes),
+    'X-Object-Nonce': record.nonce,
+    'X-Object-Aad-Hash': record.aadHash,
+    'X-Key-Version': String(record.keyVersion),
+    'Access-Control-Expose-Headers': 'X-Ciphertext-Sha256, X-Ciphertext-Bytes, X-Object-Nonce, X-Object-Aad-Hash, X-Key-Version, X-Object-Replayed',
+    ...(replayed ? { 'X-Object-Replayed': 'true' } : {}),
+  }
+}
+
+function cursorNumber(value) {
+  if (value === null) return 0
+  return Number.parseInt(String(value).slice(1), 36)
+}
+
+async function openSettings(page) {
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  })
+  const desktopButton = page.locator('#journal-navigation')
+    .getByRole('button', { name: '设置', exact: true })
+  if (await desktopButton.isVisible()) {
+    await desktopButton.click()
+    return
+  }
+  await page.locator('.mobile-nav').getByRole('button', { name: '设置', exact: true }).click()
+}
+
+async function openToday(page) {
+  const desktopButton = page.locator('#journal-navigation')
+    .getByRole('button', { name: '今日', exact: true })
+  if (await desktopButton.isVisible()) {
+    await desktopButton.click()
+    return
+  }
+  await page.locator('.mobile-nav').getByRole('button', { name: '今日', exact: true }).click()
+}
+
+async function saveEncryptedDeviceCredential(page, deviceId) {
+  const token = `dj1.${deviceId}.${'a'.repeat(32)}`
+  await openSettings(page)
+  await page.getByLabel('Journal 同步服务地址').fill(syncEndpoint)
+  await page.getByLabel('Journal 同步设备 token').fill(token)
+  await page.getByRole('button', { name: '保存 token', exact: true }).click()
+  await page.getByText('设备凭据已保存到安全存储。').waitFor()
+  return token
+}
+
+async function configureNewEncryptedSpace(page, deviceId) {
+  const token = await saveEncryptedDeviceCredential(page, deviceId)
+  await page.getByRole('button', { name: '初始化新加密空间', exact: true }).click()
+  await page.getByText('新的端到端加密空间已初始化。').waitFor()
+  return token
+}
+
+async function encryptedSyncQueueSnapshot(page) {
+  return page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open('daylight-journal-encrypted-sync-v1')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      const transaction = database.transaction(['outbox', 'object-payloads', 'archives'], 'readonly')
+      const readAll = (store) => new Promise((resolve, reject) => {
+        const request = transaction.objectStore(store).getAll()
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const [outbox, objects, archives] = await Promise.all([
+        readAll('outbox'),
+        readAll('object-payloads'),
+        readAll('archives'),
+      ])
+      return {
+        outbox: outbox.map((item) => ({
+          opId: item.opId,
+          state: item.state,
+          objectKeys: item.objects.map((object) => object.objectKey),
+        })),
+        objectKeys: objects.map((item) => item.objectKey),
+        archiveCount: archives.length,
+      }
+    } finally {
+      database.close()
+    }
+  })
+}
 
 function createSeedEntry(date, title, content, overrides = {}) {
   const timestamp = `${date}T12:00:00.000Z`
@@ -44,22 +147,80 @@ async function openApp({
   seed = null,
   failStorage = false,
   failSync = false,
+  failMutationExchanges = 0,
+  remote = createEncryptedRemote(),
   skipSplash = true,
   reducedMotion = 'reduce',
 }) {
   const context = await browser.newContext({ viewport, reducedMotion })
   const page = await context.newPage()
   const requests = []
+  const objectRequests = []
+  const objectResponses = []
   const errors = []
+  let remainingMutationFailures = failMutationExchanges
   page.on('pageerror', (error) => errors.push(error.message))
+  page.on('response', async (response) => {
+    if (response.url().includes('/sync/v2/objects/')) {
+      objectResponses.push({ status: response.status(), headers: await response.allHeaders() })
+    }
+  })
   page.on('console', (message) => {
     if (message.type() === 'error' && !message.text().includes('ERR_FAILED')) {
       errors.push(message.text())
     }
   })
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
-  await page.route(/\/journal\/(all|sync)$/, async (route) => {
+  await page.route(/\/sync\/v2\/objects\//, async (route) => {
     const request = route.request()
+    const objectKey = decodeURIComponent(new URL(request.url()).pathname.split('/sync/v2/objects/')[1] || '')
+    if (request.method() === 'PUT') {
+      const headers = request.headers()
+      const body = request.postDataBuffer() || Buffer.alloc(0)
+      const record = {
+        objectKey,
+        ciphertextSha256: headers['x-ciphertext-sha256'],
+        ciphertextBytes: Number(headers['x-ciphertext-bytes']),
+        nonce: headers['x-object-nonce'],
+        aadHash: headers['x-object-aad-hash'],
+        keyVersion: Number(headers['x-key-version']),
+        body: Buffer.from(body),
+      }
+      objectRequests.push({ method: 'PUT', ...record })
+      const existing = remote.objects.get(objectKey)
+      if (existing) {
+        const same = existing.ciphertextSha256 === record.ciphertextSha256 &&
+          existing.ciphertextBytes === record.ciphertextBytes &&
+          existing.nonce === record.nonce && existing.aadHash === record.aadHash &&
+          existing.keyVersion === record.keyVersion && existing.body.equals(record.body)
+        await route.fulfill({
+          status: same ? 204 : 409,
+          headers: same ? objectHeaders(existing, true) : { 'Content-Type': 'application/json' },
+          ...(same ? {} : { body: JSON.stringify({ error: 'object_key_reused' }) }),
+        })
+        return
+      }
+      remote.objects.set(objectKey, record)
+      await route.fulfill({ status: 201, headers: objectHeaders(record), body: '' })
+      return
+    }
+    if (request.method() === 'GET') {
+      const record = remote.objects.get(objectKey)
+      objectRequests.push({ method: 'GET', objectKey })
+      if (!record) {
+        await route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'object_not_found' }),
+        })
+        return
+      }
+      await route.fulfill({ status: 200, headers: objectHeaders(record), body: record.body })
+      return
+    }
+    await route.fulfill({ status: 405 })
+  })
+  await page.route(/\/sync\/v2\/exchange$/, async (route) => {
     if (failSync) {
       await route.fulfill({
         status: 503,
@@ -68,19 +229,83 @@ async function openApp({
       })
       return
     }
-    if (request.method() === 'GET') {
+    const body = JSON.parse(route.request().postData() || '{}')
+    requests.push(body)
+    if ((body.mutations || []).length > 0 && remainingMutationFailures > 0) {
+      remainingMutationFailures -= 1
       await route.fulfill({
-        status: 200,
+        status: 503,
         contentType: 'application/json',
-        body: '{}',
+        body: JSON.stringify({ error: 'restart-test' }),
       })
       return
     }
-    requests.push(JSON.parse(request.postData() || '[]'))
+    const acknowledged = []
+    const conflicts = []
+    for (const mutation of body.mutations || []) {
+      const replay = remote.operations.get(mutation.opId)
+      if (replay) {
+        acknowledged.push({ ...replay, replayed: true })
+        continue
+      }
+      const revision = remote.revisions.get(mutation.entityId) || 0
+      if (mutation.baseRevision !== revision) {
+        conflicts.push({
+          outcome: 'conflict',
+          opId: mutation.opId,
+          entityType: mutation.entityType,
+          entityId: mutation.entityId,
+          operation: mutation.operation,
+          error: 'REVISION_CONFLICT',
+          current: remote.changes.findLast((change) => change.entityId === mutation.entityId) || null,
+          candidate: mutation,
+        })
+        continue
+      }
+      const nextRevision = revision + 1
+      const acknowledgement = {
+        outcome: 'acknowledged',
+        opId: mutation.opId,
+        entityType: mutation.entityType,
+        entityId: mutation.entityId,
+        operation: mutation.operation,
+        revision: nextRevision,
+      }
+      acknowledged.push(acknowledgement)
+      remote.operations.set(mutation.opId, acknowledgement)
+      remote.revisions.set(mutation.entityId, nextRevision)
+      remote.changes.push({
+        entityType: mutation.entityType,
+        entityId: mutation.entityId,
+        revision: nextRevision,
+        operation: mutation.operation,
+        keyVersion: mutation.keyVersion,
+        ciphertext: mutation.ciphertext,
+        nonce: mutation.nonce,
+        aadHash: mutation.aadHash,
+        objects: mutation.objects,
+        changedAt: new Date().toISOString(),
+        originDeviceId: body.deviceId,
+        operationId: mutation.opId,
+      })
+    }
+    const start = cursorNumber(body.cursor)
+    const changes = remote.changes.slice(start, start + 100)
+    const nextCursor = start + changes.length
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      body: JSON.stringify({
+        protocolVersion: 2,
+        envelopeVersion: 1,
+        product: 'journal',
+        acknowledged,
+        conflicts,
+        changes,
+        nextCursor: `c${nextCursor.toString(36)}`,
+        hasMore: start + changes.length < remote.changes.length,
+        serverTime: new Date().toISOString(),
+      }),
     })
   })
   await page.addInitScript(
@@ -103,7 +328,7 @@ async function openApp({
     console.error('Page content:', (await page.content()).slice(0, 2_000))
     throw error
   }
-  return { context, page, requests, errors }
+  return { context, page, requests, objectRequests, objectResponses, remote, errors }
 }
 
 try {
@@ -123,7 +348,7 @@ try {
 
   {
     const session = await openApp({ viewport: { width: 1440, height: 900 } })
-    const { context, page, requests, errors } = session
+    const { context, page, requests, objectRequests, objectResponses, errors } = session
     await page.getByLabel('日记标题').fill('快速保存回归')
     await page.getByLabel('日记正文').fill('最后一段输入必须立即留在本机')
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -147,7 +372,6 @@ try {
       '图片处理中继续输入也不能被覆盖',
     )
     await page.waitForTimeout(700)
-    assert(requests.flat().some((entry) => entry.content === '图片处理中继续输入也不能被覆盖'))
     await page.screenshot({
       path: path.join(artifactDir, 'desktop.png'),
       fullPage: true,
@@ -161,13 +385,42 @@ try {
       path: path.join(artifactDir, 'desktop-dark.png'),
       fullPage: true,
     })
-    await page.locator('#journal-navigation')
-      .getByRole('button', { name: '设置', exact: true })
-      .click()
-    await page.getByLabel('Journal 同步服务地址').fill('http://journal-host.local:8780')
-    await page.getByLabel('Journal 同步服务配对令牌')
-      .fill('test-only-pairing-token-000000000000')
-    await page.getByRole('button', { name: '保存', exact: true }).click()
+    const token = await configureNewEncryptedSpace(page, 'test-device-1')
+    await page.waitForFunction(() => window.localStorage.getItem('daylight-journal-api') !== null)
+    await page.waitForFunction(() => document.body.textContent?.includes('密钥已就绪'))
+    for (let attempt = 0; attempt < 200 &&
+      !requests.some((entry) => Array.isArray(entry.mutations) && entry.mutations.length > 0);
+      attempt += 1) {
+      await page.waitForTimeout(50)
+    }
+    assert(
+      requests.some((entry) => Array.isArray(entry.mutations) && entry.mutations.length > 0),
+      JSON.stringify({
+        requests,
+        objectRequests: objectRequests.map(({ body: _body, ...entry }) => entry),
+        objectResponses,
+        errors,
+      }),
+    )
+    const attachmentMutation = requests
+      .flatMap((entry) => entry.mutations || [])
+      .find((mutation) => mutation.objects.length > 0)
+    assert(attachmentMutation, '带封面的日记没有生成加密对象 manifest')
+    assert.equal(attachmentMutation.objects.length, 1)
+    const uploadedObject = objectRequests.find((entry) => entry.method === 'PUT')
+    assert(uploadedObject, '带封面的日记没有先上传对象密文')
+    assert.equal(uploadedObject.objectKey, attachmentMutation.objects[0].objectKey)
+    assert.equal(uploadedObject.body.length, attachmentMutation.objects[0].ciphertextBytes)
+    assert.equal(uploadedObject.body.toString('utf8').includes('data:image/'), false)
+    assert.equal(uploadedObject.body.toString('utf8').includes('图片处理中继续输入也不能被覆盖'), false)
+    assert.equal(uploadedObject.body.toString('utf8').includes(token), false)
+    const serializedRequests = requests.map((entry) => JSON.stringify(entry))
+    assert(serializedRequests.every((entry) => !entry.includes('图片处理中继续输入也不能被覆盖')),
+      '加密同步 envelope 泄露了日记正文')
+    assert(serializedRequests.every((entry) => !entry.includes('data:image/')),
+      '加密同步 envelope 泄露了封面 base64')
+    assert(serializedRequests.every((entry) => !entry.includes(token)),
+      '加密同步 envelope 泄露了设备 token')
     assert.deepEqual(
       await page.evaluate(() => ({
         url: localStorage.getItem('daylight-journal-api'),
@@ -175,9 +428,26 @@ try {
       })),
       {
         url: 'http://journal-host.local:8780',
-        token: 'test-only-pairing-token-000000000000',
+        token: null,
       },
     )
+    await page.waitForFunction(async () => {
+      const database = await new Promise((resolve, reject) => {
+        const request = indexedDB.open('daylight-journal-encrypted-sync-v1')
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const transaction = database.transaction(['outbox', 'object-payloads'], 'readonly')
+      const count = (store) => new Promise((resolve, reject) => {
+        const request = transaction.objectStore(store).count()
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const [outboxCount, objectCount] = await Promise.all([count('outbox'), count('object-payloads')])
+      const result = outboxCount === 0 && objectCount === 0
+      database.close()
+      return result
+    })
     await page.screenshot({
       path: path.join(artifactDir, 'desktop-settings.png'),
       fullPage: true,
@@ -318,6 +588,8 @@ try {
       failSync: true,
     })
     await page.getByLabel('日记正文').fill('离线时保留在本机的虚构草稿')
+    await configureNewEncryptedSpace(page, 'offline-device-1')
+    await openToday(page)
     await page.getByRole('button', { name: '重试同步' }).waitFor()
     assert.equal(await page.locator('.chat-mini').textContent(), 'AI 复盘')
     assert.equal(await page.locator('.chat-mini').isDisabled(), true)
@@ -326,6 +598,109 @@ try {
       `离线回归出现了预期之外的浏览器错误：${JSON.stringify(errors)}`,
     )
     await context.close()
+  }
+
+  {
+    const coverImage = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
+    const restartSeed = {
+      [today]: createSeedEntry(today, '重启续传回归', '对象已上传后 exchange 暂时失败。', { coverImage }),
+    }
+    const session = await openApp({
+      viewport: { width: 390, height: 844 },
+      seed: restartSeed,
+      failMutationExchanges: 1,
+    })
+    const { context, page, requests, objectRequests, remote, errors } = session
+    await configureNewEncryptedSpace(page, 'restart-device-1')
+    await openToday(page)
+    await page.getByRole('button', { name: '重试同步' }).waitFor()
+    const failedMutation = requests.flatMap((entry) => entry.mutations || [])[0]
+    assert(failedMutation, '故障注入没有命中带 outbox 的 exchange')
+    const queued = await encryptedSyncQueueSnapshot(page)
+    assert.deepEqual(queued.outbox, [{
+      opId: failedMutation.opId,
+      state: 'retry',
+      objectKeys: [failedMutation.objects[0].objectKey],
+    }])
+    assert.deepEqual(queued.objectKeys, [failedMutation.objects[0].objectKey])
+    assert.equal(remote.objects.size, 1)
+    const firstUpload = objectRequests.find((entry) => entry.method === 'PUT')
+    assert(firstUpload)
+
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.locator('.app-shell').waitFor()
+    await page.waitForFunction(() => document.body.textContent?.includes('已保存并同步') ||
+      document.body.textContent?.includes('同步服务可用'))
+    for (let attempt = 0; attempt < 80 &&
+      requests.flatMap((entry) => entry.mutations || []).filter((mutation) => mutation.opId === failedMutation.opId).length < 2;
+      attempt += 1) {
+      await page.waitForTimeout(50)
+    }
+    const replayedMutations = requests
+      .flatMap((entry) => entry.mutations || [])
+      .filter((mutation) => mutation.opId === failedMutation.opId)
+    assert.equal(replayedMutations.length, 2, '重启后没有重放同一个稳定 opId')
+    const replayedUploads = objectRequests
+      .filter((entry) => entry.method === 'PUT' && entry.objectKey === firstUpload.objectKey)
+    assert.equal(replayedUploads.length, 2, '重启后没有重放同一个对象上传')
+    assert.equal(replayedUploads[0].body.equals(replayedUploads[1].body), true)
+    assert.deepEqual(await encryptedSyncQueueSnapshot(page), {
+      outbox: [],
+      objectKeys: [],
+      archiveCount: 0,
+    })
+    assert(errors.every((message) => message.includes('503')), JSON.stringify(errors))
+    await context.close()
+  }
+
+  {
+    const remote = createEncryptedRemote()
+    const coverImage = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
+    const recoverySecret = 'journal-e2e-recovery-2026'
+    const source = await openApp({
+      viewport: { width: 1440, height: 900 },
+      seed: {
+        [today]: createSeedEntry(today, '跨设备封面恢复', '第二台设备必须从对象存储解密恢复。', { coverImage }),
+      },
+      remote,
+    })
+    await configureNewEncryptedSpace(source.page, 'source-device-1')
+    await source.page.waitForFunction(() => document.body.textContent?.includes('已保存并同步') ||
+      document.body.textContent?.includes('同步服务可用'))
+    await openSettings(source.page)
+    await source.page.getByLabel('Journal 恢复密钥短语').fill(recoverySecret)
+    await source.page.getByRole('button', { name: '导出恢复包' }).click()
+    await source.page.getByText('恢复包已生成。').waitFor()
+    const recoveryPackage = await source.page.getByLabel('Journal 恢复包').inputValue()
+    assert(!recoveryPackage.includes('跨设备封面恢复'))
+    assert(!recoveryPackage.includes('data:image/'))
+    await source.context.close()
+
+    const target = await openApp({ viewport: { width: 1440, height: 900 }, remote })
+    await saveEncryptedDeviceCredential(target.page, 'target-device-1')
+    await target.page.getByLabel('Journal 恢复密钥短语').fill(recoverySecret)
+    await target.page.getByLabel('Journal 恢复包').fill(recoveryPackage)
+    await target.page.getByRole('button', { name: '导入恢复包' }).click()
+    await target.page.getByText('恢复密钥已导入。').waitFor()
+    await target.page.waitForFunction(
+      ({ storageKey, title }) => JSON.parse(localStorage.getItem(storageKey) || '{}')[Object.keys(JSON.parse(localStorage.getItem(storageKey) || '{}'))[0]]?.title === title,
+      { storageKey, title: '跨设备封面恢复' },
+    )
+    await openToday(target.page)
+    assert.equal(await target.page.getByLabel('日记标题').inputValue(), '跨设备封面恢复')
+    await target.page.getByRole('textbox', { name: '日记正文' }).click()
+    const restoredBody = target.page.locator('textarea[aria-label="日记正文"]')
+    await restoredBody.waitFor()
+    assert.equal(await restoredBody.inputValue(), '第二台设备必须从对象存储解密恢复。')
+    await target.page.locator('.entry-cover img').waitFor()
+    assert(target.objectRequests.some((entry) => entry.method === 'GET'))
+    assert.deepEqual(await encryptedSyncQueueSnapshot(target.page), {
+      outbox: [],
+      objectKeys: [],
+      archiveCount: 0,
+    })
+    assert.deepEqual(target.errors, [])
+    await target.context.close()
   }
 
   {
@@ -587,6 +962,41 @@ try {
       footerBottom <= 768,
       `平板左栏滚到底后设置区域仍不可达：bottom=${footerBottom}`,
     )
+    assert.deepEqual(errors, [])
+    await context.close()
+  }
+
+  {
+    const { context, page, errors } = await openApp({
+      viewport: { width: 390, height: 844 },
+    })
+    await page.locator('.mobile-nav').getByRole('button', { name: '设置' }).click()
+    await page.getByLabel('设置应用锁密码').fill('2468')
+    await page.getByLabel('确认应用锁密码').fill('2468')
+    await page.getByRole('button', { name: '开启应用锁' }).click()
+    await page.getByText('应用锁已开启，下次打开需要输入密码。').waitFor()
+
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    const lock = page.getByRole('dialog', { name: '应用锁' })
+    await lock.waitFor()
+    assert.equal(await page.locator('.app-shell').count(), 0)
+    for (const digit of ['9', '9', '9', '9']) {
+      await lock.getByRole('button', { name: digit, exact: true }).click()
+    }
+    await lock.getByText('密码不正确').waitFor()
+    await page.waitForTimeout(500)
+    for (const digit of ['2', '4', '6', '8']) {
+      await lock.getByRole('button', { name: digit, exact: true }).click()
+    }
+    await page.locator('.app-shell').waitFor()
+
+    await page.locator('.mobile-nav').getByRole('button', { name: '设置' }).click()
+    await page.getByLabel('当前应用锁密码').fill('2468')
+    await page.getByRole('button', { name: '关闭应用锁' }).click()
+    await page.getByText('应用锁已关闭。', { exact: true }).waitFor()
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.locator('.app-shell').waitFor()
+    assert.equal(await page.getByRole('dialog', { name: '应用锁' }).count(), 0)
     assert.deepEqual(errors, [])
     await context.close()
   }

@@ -11,29 +11,43 @@ if (-not $resolvedData.StartsWith([IO.Path]::GetFullPath($env:ProgramData), [Str
     throw 'DataDir must be under ProgramData.'
 }
 
+function Get-AnonymousStatus([string]$Uri) {
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $Uri -TimeoutSec 5 | Out-Null
+        return 200
+    } catch {
+        # A refused connection carries no HTTP response object; report -1
+        # instead of tripping StrictMode on the missing property.
+        $response = $_.Exception.PSObject.Properties['Response']
+        if ($null -ne $response -and $null -ne $response.Value) { return [int]$response.Value.StatusCode }
+        return -1
+    }
+}
+
+function Test-DynamicPortExclusion([int]$Port) {
+    # Inside a dynamic WinNAT excluded range a privileged bind "succeeds" with
+    # no reachable listener (BUG-019); administered ranges (*) are the Journal
+    # reservation and are expected.
+    foreach ($line in & netsh int ipv4 show excludedportrange protocol=tcp) {
+        if ($line -match '^\s*(\d+)\s+(\d+)(\s*\*)?\s*$') {
+            if ($Port -ge [int]$Matches[1] -and $Port -le [int]$Matches[2] -and -not $Matches[3]) { return $true }
+        }
+    }
+    return $false
+}
+
+if ((Test-DynamicPortExclusion 8780) -or (Test-DynamicPortExclusion 8781)) {
+    throw 'Journal ports 8780/8781 sit inside a dynamic WinNAT excluded port range; rerun mcp\service\install.ps1 to reserve them.'
+}
+
 $token = (Get-Content -Raw -LiteralPath (Join-Path $resolvedData 'journal-api-token')).Trim()
 $headers = @{ Authorization = "Bearer $token" }
-try {
-    Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8780/v1/status' -TimeoutSec 5 | Out-Null
-    $anonymousStatus = 200
-} catch {
-    $anonymousStatus = [int]$_.Exception.Response.StatusCode
-}
+$anonymousStatus = Get-AnonymousStatus 'http://127.0.0.1:8780/v1/status'
 $status = Invoke-RestMethod -Headers $headers -Uri 'http://127.0.0.1:8780/v1/status' -TimeoutSec 5
 $capabilities = Invoke-RestMethod -Headers $headers -Uri 'http://127.0.0.1:8780/v1/capabilities' -TimeoutSec 5
 $lanHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8781/healthz' -TimeoutSec 5
-try {
-    Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8781/v1/status' -TimeoutSec 5 | Out-Null
-    $lanAnonymousStatus = 200
-} catch {
-    $lanAnonymousStatus = [int]$_.Exception.Response.StatusCode
-}
-try {
-    Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8781/mcp' -TimeoutSec 5 | Out-Null
-    $lanMcpStatus = 200
-} catch {
-    $lanMcpStatus = [int]$_.Exception.Response.StatusCode
-}
+$lanAnonymousStatus = Get-AnonymousStatus 'http://127.0.0.1:8781/v1/status'
+$lanMcpStatus = Get-AnonymousStatus 'http://127.0.0.1:8781/mcp'
 $listenerProcesses = @(Get-NetTCPConnection -LocalPort 8780, 8781 -State Listen |
     Select-Object -ExpandProperty OwningProcess -Unique)
 

@@ -15,7 +15,20 @@ React/Vite/Capacitor
                                     │
 ChatGPT → Journal Tunnel → 127.0.0.1:8780/mcp
 
-手机/平板 → mDNS `_poyi-journal._tcp.local` → LAN 8781（认证业务 API，无 MCP）
+手机/平板 → Android NSD / 私网健康探测发现服务 → LAN 8781（认证业务 API，无 MCP）
+```
+
+可选云 V2（代码已实现、尚未发布验收）：
+
+```text
+localStorage 明文工作副本
+        │
+        ├─ IndexedDB：不可导出设备包装密钥、加密实体、cursor、outbox/conflict
+        ├─ IndexedDB object-payloads：待提交封面密文
+        │
+        └─ Journal Cloud Worker
+              ├─ D1：密文实体、revision、tombstone、change feed、幂等结果
+              └─ R2：AES-256-GCM 封面密文；D1 仅保存 manifest
 ```
 
 ## 代码职责
@@ -24,11 +37,14 @@ ChatGPT → Journal Tunnel → 127.0.0.1:8780/mcp
 - `src/pages/`：编辑、日历、历史和设置页面；页面只通过显式 props 读写应用状态
 - `src/journal/model.ts`：日记类型、运行时数据校验、时间戳合并和不可变 patch
 - `src/journal/storage.ts`：localStorage 安全适配、损坏数据识别、恢复副本和持久化结果分类
+- `src/journal/http.ts`：Android Journal 原生 HTTP 边界；HTTPS 可远端，明文只允许私网/`.local` 的 8780/8781
+- `src/journal/encryptedSync.ts`：`SyncEnvelopeV1`、AES-256-GCM/AAD、显式 root、恢复/设备批准、
+  IndexedDB outbox/flight/conflict/object-payload、分页 pull 与原子 ACK materialization
 - `src/journal/image.ts`、`moods.ts`、`status.ts`：图片压缩、心情选项和保存/同步状态协议
 - `src/journal/review.ts`：生成只读、深度且包含长期模式对照的 ChatGPT 复盘提示词
 - `src/hooks/useTodayKey.ts`、`src/hooks/useMediaQuery.ts`：跨午夜日期刷新与响应式无障碍状态
 - `tests/`：Node 数据层测试与拦截真实同步请求的 Playwright 浏览器回归
-- `src/index.css`：全局基础与兼容 token；`src/editorial-ui.css`：当前唯一组件样式入口，负责 Editorial Paper 视觉、三栏独立滚动和多端布局；旧样式文件仅保留为历史参考，不进入运行时级联
+- `src/index.css`：设计 token 与元素基线；`src/journal-ui.css`：唯一组件样式层，负责 Ink & Daylight 视觉、三区独立滚动和四档响应式布局；历史样式文件已删除，不要再新增并行样式层
 - `journal-store.mjs`：Journal 数据、整数 revision、原子写入和持久化幂等重放
 - `journal-api.mjs`：带随机 Bearer 令牌的版本化 `/v1` API
 - `mcp/`：独立 Streamable HTTP MCP、Resource、脱敏审计、健康指标、Windows 服务和 Tunnel
@@ -48,7 +64,7 @@ type JournalEntry = {
   blocks: JournalBlock[]
   mood: number | null // 1-5
   tags: string[]
-  coverImage?: string // 可选，前端压缩后的 JPEG data URL；旧记录没有此字段
+  coverImage?: string // 仅本机 materialized 视图；云 exchange 中拆为独立加密对象 manifest
   createdAt: string
   updatedAt: string
 }
@@ -74,10 +90,12 @@ type JournalBlock = {
 
 - 本地优先：网络不可用仍可写
 - 服务端是跨端共享副本，不直接替代本地编辑体验
+- 默认共享副本仍由电脑上的 `PoyiJournalMcp` 持有；未显式配置并验收云 V2 时，电脑关机期间各端只写本地
 - 合并按 `updatedAt` 取较新版本
 - 服务端同步写入串行执行，并在写入前重新读取最新副本，避免并发请求和慢设备把旧修订写回
 - 只上传有标题或正文的记录
-- 日记可带一张可选封面图；图片进入同步副本，但 MCP/ChatGPT 文本工具只返回 `hasImage`，不把 base64 图片塞进复盘上下文
+- 旧兼容同步仍可能把封面放入电脑端 JSON 副本；云 V2 会从实体明文中剥离 `coverImage`，
+  exchange 只带 manifest，对象密文由 R2 路由承载，MCP/ChatGPT 仍只返回 `hasImage`
 - 同步失败显示“已保存到本机 · 点击重试”，不能阻塞输入；点击后立即触发一次同步重试
 - 编辑变更立即写入本地 localStorage；远端同步仍采用 500ms 防抖，关闭或切后台不会丢最后一段输入
 - 本地数据和远端响应都经过结构校验；存储不可用、配额不足或数据损坏会进入明确错误状态，不再静默当作空库
@@ -85,13 +103,36 @@ type JournalBlock = {
 - 同步调度采用拉取单飞与推送串行队列：轮询、网络恢复、页面恢复同时触发时复用同一个拉取请求；编辑、复盘和恢复同步按队列发送，避免旧请求覆盖新稿
 - AI 复盘只有在当前修订版本完成推送后才开放；同步、剪贴板或弹窗失败分别显示恢复动作
 
+## 云 V2 同步不变量
+
+- 根同步密钥不会自动创建：第一设备必须显式初始化；已有空间必须导入离线恢复包，或消费一份
+  十分钟有效、绑定目标 deviceId、公钥 fingerprint 与 32-byte nonce 的单次批准包。
+- 业务实体与封面分别使用 AES-256-GCM。实体 AAD 绑定 product、entity type/id、operation、
+  keyVersion、revision；对象 AAD 在此基础上再绑定不可变 objectKey。
+- 一次本地编辑在同一 IndexedDB 事务写入 entity、稳定 opId outbox、对象密文与 flight reset。
+  相同内容在失败/重启后复用原 mutation，不重新生成 opId、nonce 或 objectKey。
+- 对象提交顺序固定为：读取持久 payload → 本地 SHA-256/长度/manifest 校验 → PUT → 校验服务端
+  完整性回执 → exchange manifest。服务端在对象不存在或 metadata 不一致时拒绝 mutation。
+- 拉取顺序固定为：严格校验 response → GET 对象 → 校验响应 metadata/长度/SHA-256/AAD → 解密并
+  校验 data URL → 预计算 fingerprint → 单一 IndexedDB 事务 materialize entity/cursor、处理 ACK/conflict，
+  最后删除已 ACK 的 outbox 与 object-payload。
+- root fingerprint 变化时，旧 entity/outbox/meta/conflict/object-payload 与旧 wrapped root 一并写入
+  archive 后才清空 active stores，避免把旧密文静默解释为新空间数据。
+- Android API 24/25 的 Capacitor 原生 HTTP 对 binary `file` body 会写零字节；客户端仅在原生桥上
+  使用专用 base64 media type，Worker 解码并校验后写入 R2。base64 不进入 exchange、D1 或 R2。
+- 云 V2 的 local tests 不等于上线证据。没有 staging revision、R2/D1 探针、真实双设备恢复和三轮
+  PC-off 验收时，manifest 继续保持 `supportsPcOff=false`。
+
 ## 独立 MCP 边界
 
 - `PoyiJournalMcp` 仅监听 `127.0.0.1:8780`，不注册其他项目工具，也不读取其他数据库。
 - 同一业务进程在 Private/LocalSubnet 的 8781 提供带 Bearer 的 LAN API，并通过 mDNS
   发布稳定 serviceId；LAN listener 不注册 `/mcp`。
 - `/v1/*` 使用仓库外随机 Bearer token；`/mcp` 只允许通过回环地址或独立 Secure MCP Tunnel 到达。
-- 普通工具只返回状态、元数据、短摘要和 Resource URI；完整正文使用 `journal://entries/{date}`。
+- LAN `/pairing/exchange` 只接受电脑管理员显式生成的 6 位短时码；5 分钟过期、最多 5 次、成功即删除，返回的长期令牌只保存到发起配对的应用本地
+- 列表/搜索工具只返回状态、元数据、短摘要和 Resource URI；`journal_get_entry` 按
+  `offset`/`maxChars` 分页返回正文并以 `resource_link` 指向 `journal://entries/{date}`，
+  Resource 仍提供权威全文。
 - 写操作由 `JournalStore` 执行，MCP 层只做 schema、错误映射和脱敏审计。
 - Journal 没有后台控制命令，因此 `commandId`、`expectedState`、`expiresAt` 不适用，capabilities 明确返回空 `controlCommands`。
 

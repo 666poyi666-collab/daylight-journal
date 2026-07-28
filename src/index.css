@@ -1,86 +1,265 @@
+/*
+ * 拾光 · Ink & Daylight
+ * 设计基座：暖纸背景、真实墨色对比、单一赭金强调色、发丝分隔线代替漂浮阴影。
+ * 只放全局 token 与元素基线；组件样式全部在 journal-ui.css。
+ */
+
 :root {
+  /* ── 画布与表面 ───────────────────────────── */
+  --paper: #f7f4ed;
+  --paper-deep: #efeade;
+  --surface: #fffefb;
+  --surface-raised: #ffffff;
+  --surface-sunk: #f1ede3;
+  --surface-hover: #f6f2e9;
+
+  /* ── 墨色阶 ──────────────────────────────── */
+  --ink: #191713;
+  --ink-2: #4d483f;
+  --ink-3: #857e70;
+  --ink-4: #a9a294;
+
+  /* ── 发丝线 ──────────────────────────────── */
+  --rule: #e3ddce;
+  --rule-soft: #ece7da;
+  --rule-strong: #d0c8b5;
+
+  /* ── 赭金强调（拾光 = 拾起光） ─────────────── */
+  --accent: #a85f27;
+  --accent-hover: #8e4f1d;
+  --accent-bright: #d98b3d;
+  --accent-wash: #f7ecdc;
+  --accent-line: #e6cfae;
+
+  /* ── 反相面板（AI 复盘等焦点区域） ─────────── */
+  --panel: #201d18;
+  --panel-2: #2c2822;
+  --panel-ink: #f4efe4;
+  --panel-ink-2: #b0a897;
+  --panel-rule: #3a352c;
+
+  /* ── 语义色 ──────────────────────────────── */
+  --ok: #4f7a54;
+  --warn: #a97a25;
+  --danger: #a3462f;
+
+  /* ── 心情色阶：冷→暖，五级可读 ─────────────── */
+  --mood-1: #6d7f99;
+  --mood-2: #8d8b81;
+  --mood-3: #6f9179;
+  --mood-4: #c39338;
+  --mood-5: #d4713f;
+
+  /* ── 字族 ────────────────────────────────
+   * 拉丁字形先行，中文回落到宋体/黑体：数字用 Georgia，汉字用宋体，
+   * 这种混排是这套视觉的核心质感来源。 */
+  --font-ui: 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI',
+    'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Fraunces', Georgia, 'Songti SC', 'Source Han Serif SC',
+    'Noto Serif CJK SC', 'Noto Serif SC', STSong, SimSun, serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', ui-monospace,
+    'Courier New', monospace;
+
+  /* ── 书写字族：正文即书 ────────────────────
+   * 日记正文默认衬线（Source Serif 4 + 自打包思源宋体子集），像一本写给
+   * 未来自己的书；Android 没有系统宋体，所以中文衬线必须随应用分发。
+   * 用户可在设置切回黑体，由 :root[data-write-font='sans'] 接管。 */
+  --font-write: 'Source Serif 4', 'Source Han Serif SC Subset', Georgia,
+    'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC', STSong, SimSun,
+    serif;
+
+  /* ── 字号阶 ──────────────────────────────── */
+  --t-micro: 11px;
+  --t-small: 12.5px;
+  --t-body: 14px;
+  --t-read: 16.5px;
+  --t-lead: 18px;
+  --t-h3: 17px;
+  --t-h2: 21px;
+  --t-h1: 27px;
+
+  /* ── 圆角：克制，不做气泡 ──────────────────── */
+  --r-xs: 4px;
+  --r-sm: 7px;
+  --r: 11px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* ── 高度：只有真正漂浮的东西才有影子 ───────── */
+  --shadow-pop: 0 1px 2px rgba(31, 25, 12, 0.08), 0 12px 32px rgba(31, 25, 12, 0.12);
+  --shadow-float: 0 2px 4px rgba(31, 25, 12, 0.1), 0 24px 60px rgba(31, 25, 12, 0.18);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+
+  /* ── 动效 ────────────────────────────────── */
+  --t-fast: 120ms;
+  --t-base: 200ms;
+  --t-slow: 320ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── 版心：中文正文一行约 34–38 字，长文阅读最舒服的区间 ── */
+  --measure: 680px;
+
+  /* ── 纸纹：feTurbulence 噪点贴片，浏览器栅格化后按图片平铺，运行时零开销 ── */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.042 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+
   color-scheme: light;
-  font-family: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
-  color: #28312c;
-  background: #eeeae2;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #eeeae2;
-  --surface: #f8f5ee;
-  --surface-solid: #fffdf8;
-  --surface-soft: #f2efe7;
-  --text: #28312c;
-  --muted: #737d76;
-  --line: #d9d5cb;
-  --primary: #617a68;
-  --primary-deep: #425c4b;
-  --primary-soft: #e2e9e1;
-  --warm: #eee1d5;
-  --terracotta: #a4654f;
-  --danger: #9a5048;
-  --shadow: 0 18px 48px rgba(55, 48, 38, 0.08);
-  --shadow-paper: 0 1px 2px rgba(55, 48, 38, 0.06), 0 12px 32px rgba(55, 48, 38, 0.07);
-  --shadow-raised: 0 4px 12px rgba(55, 48, 38, 0.1), 0 22px 52px rgba(55, 48, 38, 0.12);
-  --motion-fast: 140ms;
-  --motion-standard: 220ms;
-  --motion-emphasized: 280ms;
-  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-spring: cubic-bezier(0.2, 0.88, 0.24, 1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-:root[data-theme="dark"] {
+
+:root[data-write-font='sans'] {
+  --font-write: var(--font-ui);
+}
+
+:root[data-theme='dark'] {
+  --paper: #131211;
+  --paper-deep: #0d0c0b;
+  --surface: #1a1917;
+  --surface-raised: #201e1b;
+  --surface-sunk: #221f1c;
+  --surface-hover: #242220;
+
+  --ink: #f2ede2;
+  --ink-2: #bcb4a5;
+  --ink-3: #8b8375;
+  --ink-4: #6a6357;
+
+  --rule: #2c2926;
+  --rule-soft: #232120;
+  --rule-strong: #3d3934;
+
+  --accent: #e0a458;
+  --accent-hover: #eeb96f;
+  --accent-bright: #f0b96b;
+  --accent-wash: #2a2118;
+  --accent-line: #4a3a24;
+
+  --panel: #24211d;
+  --panel-2: #2e2a25;
+  --panel-ink: #f2ede2;
+  --panel-ink-2: #a89f8f;
+  --panel-rule: #403a32;
+
+  --ok: #82ad86;
+  --warn: #d3a755;
+  --danger: #dd8a72;
+
+  --mood-1: #8298b5;
+  --mood-2: #a09d92;
+  --mood-3: #85ab90;
+  --mood-4: #d7ab54;
+  --mood-5: #e4885a;
+
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23g)'/%3E%3C/svg%3E");
+
+  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.42);
+  --shadow-float: 0 2px 4px rgba(0, 0, 0, 0.5), 0 24px 60px rgba(0, 0, 0, 0.55);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
   color-scheme: dark;
-  color: #e7f0e8;
-  background: #111813;
-  --bg: #171915;
-  --surface: #1d211c;
-  --surface-solid: #242821;
-  --surface-soft: #20241f;
-  --text: #e9e7df;
-  --muted: #a4aaa2;
-  --line: #383c35;
-  --primary: #9caf9c;
-  --primary-deep: #c1d0c0;
-  --primary-soft: #303a31;
-  --warm: #3a302a;
-  --terracotta: #d09278;
-  --danger: #e29489;
-  --shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
-  --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.28), 0 14px 34px rgba(0, 0, 0, 0.2);
-  --shadow-raised: 0 5px 14px rgba(0, 0, 0, 0.34), 0 24px 54px rgba(0, 0, 0, 0.3);
+  color: var(--ink);
+  background: var(--paper);
 }
-* {
+
+/* 思源宋体 GB2312 子集（1.3MB，随包分发），许可与来源见 src/assets/fonts/README.md */
+@font-face {
+  font-family: 'Source Han Serif SC Subset';
+  src: url('./assets/fonts/source-han-serif-sc-regular-gb2312.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
+
 html {
   min-width: 320px;
-  background: var(--bg);
+  background: var(--paper);
+  -webkit-text-size-adjust: 100%;
 }
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: var(--bg);
+  background: var(--paper);
   overflow-x: hidden;
+  font-size: var(--t-body);
+  line-height: 1.6;
 }
+
+#root {
+  min-height: 100vh;
+  isolation: isolate;
+}
+
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
-}
-button {
   color: inherit;
+}
+
+/* 书写细节：光标是纸面上唯一持续存在的"笔尖"，用强调色 */
+input,
+textarea {
+  caret-color: var(--accent);
+}
+
+button {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-#root {
-  min-height: 100vh;
+
+:where(h1, h2, h3, h4, p, figure, blockquote) {
+  margin: 0;
 }
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent);
-  outline-offset: 3px;
+
+::selection {
+  background: var(--accent-wash);
+  color: var(--accent);
 }
+
+:where(button, input, textarea, [tabindex], a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* 滚动条与内容同色系，不喧宾夺主 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border: 3px solid transparent;
+  border-radius: var(--r-pill);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-4);
+  background-clip: content-box;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

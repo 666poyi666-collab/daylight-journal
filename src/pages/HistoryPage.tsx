@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Archive, Plus, Search, X } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
-import type { JournalEntry } from '../journal/model.ts'
+import { journalPreviewText, type JournalEntry } from '../journal/model.ts'
 import { journalMoods } from '../journal/moods.ts'
 
 type HistoryPageProps = {
@@ -182,7 +182,10 @@ export function HistoryPage({
                             </span>
                           )}
                         </div>
-                        <p>{entry.content || '这一天只留下了一个标题。'}</p>
+                        <p>
+                          {journalPreviewText(entry.content) ||
+                            '这一天只留下了一个标题。'}
+                        </p>
                         <footer>
                           {entry.tags.map((tag) => (
                             <span key={tag}>#{tag}</span>

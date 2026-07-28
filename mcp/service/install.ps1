@@ -35,6 +35,42 @@ function Wait-Ready([int]$TimeoutSeconds = 45) {
     throw 'PoyiJournalMcp did not become ready.'
 }
 
+function Invoke-Quiet([string]$FilePath, [string[]]$ArgumentList) {
+    # Native stderr noise must not become terminating under the Stop
+    # preference; run with Continue and let callers judge the exit code.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $FilePath @ArgumentList 2>&1 | Out-Null } finally { $ErrorActionPreference = $previous }
+}
+
+function Invoke-Icacls([string[]]$ArgumentList) {
+    Invoke-Quiet 'icacls' $ArgumentList
+}
+
+function Reserve-JournalPorts([int]$StartPort, [int]$Count) {
+    # WinNAT re-picks its dynamic excluded port ranges after network-stack
+    # events; when one lands on the Journal ports a privileged bind "succeeds"
+    # with no reachable listener (BUG-019). An administered exclusion pins the
+    # ports so dynamic ranges avoid them permanently.
+    $endPort = $StartPort + $Count - 1
+    $administered = $false
+    $dynamicHit = $false
+    foreach ($line in & netsh int ipv4 show excludedportrange protocol=tcp) {
+        if ($line -match '^\s*(\d+)\s+(\d+)(\s*\*)?\s*$') {
+            $rangeStart = [int]$Matches[1]
+            $rangeEnd = [int]$Matches[2]
+            if ($rangeStart -le $StartPort -and $rangeEnd -ge $endPort -and $Matches[3]) { $administered = $true }
+            elseif ($rangeStart -le $endPort -and $rangeEnd -ge $StartPort -and -not $Matches[3]) { $dynamicHit = $true }
+        }
+    }
+    if ($administered) { return }
+    if ($dynamicHit) { Invoke-Quiet 'net' @('stop', 'winnat') }
+    Invoke-Quiet 'netsh' @('int', 'ipv4', 'add', 'excludedportrange', 'protocol=tcp', "startport=$StartPort", "numberofports=$Count", 'store=persistent')
+    $added = $LASTEXITCODE
+    if ($dynamicHit) { Invoke-Quiet 'net' @('start', 'winnat') }
+    if ($added -ne 0) { throw "Failed to reserve Journal ports $StartPort-$endPort against dynamic exclusions." }
+}
+
 function Wait-TunnelReady([int]$TimeoutSeconds = 45) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
@@ -121,6 +157,16 @@ foreach ($envNode in @($configuration.SelectNodes('/service/env'))) {
 $configuration.SelectSingleNode('/service/logpath').InnerText = [string](Join-Path $resolvedData 'service-logs\mcp')
 $configuration.Save($configurationPath)
 
+$shortcutPath = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\拾光手机配对.lnk'
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = 'powershell.exe'
+$pairScript = Join-Path $resolvedInstall 'mcp\service\pair-device.ps1'
+$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$pairScript`" -InstallDir `"$resolvedInstall`" -DataDir `"$resolvedData`""
+$shortcut.WorkingDirectory = $resolvedInstall
+$shortcut.Description = '生成拾光手机的一次性安全配对码'
+$shortcut.Save()
+
 $serviceExe = Join-Path $resolvedInstall 'PoyiJournalMcp.exe'
 & $serviceExe install
 if ($LASTEXITCODE -ne 0) { throw 'PoyiJournalMcp service installation failed.' }
@@ -129,17 +175,27 @@ $serviceSid = 'NT SERVICE\PoyiJournalMcp'
 $auditDir = Join-Path $resolvedData 'logs'
 $serviceLogDir = Join-Path $resolvedData 'service-logs\mcp'
 New-Item -ItemType Directory -Path $auditDir, $serviceLogDir -Force | Out-Null
-& icacls $resolvedInstall /grant:r "$serviceSid`:RX" /T /C | Out-Null
+Invoke-Icacls @($resolvedInstall, '/grant:r', "$serviceSid`:RX", '/T', '/C')
 if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal installation ACLs.' }
-& icacls $resolvedInstall /grant:r "$serviceSid`:(OI)(CI)RX" | Out-Null
+Invoke-Icacls @($resolvedInstall, '/grant:r', "$serviceSid`:(OI)(CI)RX")
 if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal installation inheritance.' }
 
 # Existing files need direct ACEs; propagation flags only govern future children.
-& icacls $resolvedData /inheritance:r /grant:r 'BUILTIN\Administrators:F' `
-    "$serviceSid`:M" /T /C | Out-Null
+# The recursive grant must skip Tunnel-owned objects: its WinSW log stays locked
+# while the Tunnel service runs, and the DPAPI runtime key must never carry a
+# Journal MCP ACE.
+Invoke-Icacls @($resolvedData, '/inheritance:r', '/grant:r', 'BUILTIN\Administrators:F', "$serviceSid`:M")
 if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal data ACLs.' }
-& icacls $resolvedData /grant:r 'BUILTIN\Administrators:(OI)(CI)F' `
-    "$serviceSid`:(OI)(CI)M" | Out-Null
+$dataTargets = @(
+    Get-ChildItem -LiteralPath $resolvedData -Force |
+        Where-Object { $_.Name -ne 'service-logs' -and $_.Name -ne 'tunnel-runtime-key.dpapi' } |
+        ForEach-Object { $_.FullName }
+) + @($serviceLogDir)
+foreach ($dataTarget in $dataTargets) {
+    Invoke-Icacls @($dataTarget, '/grant:r', 'BUILTIN\Administrators:F', "$serviceSid`:M", '/T', '/C')
+    if ($LASTEXITCODE -ne 0) { throw "Failed to configure Journal data ACLs for $dataTarget." }
+}
+Invoke-Icacls @($resolvedData, '/grant:r', 'BUILTIN\Administrators:(OI)(CI)F', "$serviceSid`:(OI)(CI)M")
 if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Journal data ACLs.' }
 
 $firewallRule = Get-NetFirewallRule -Name 'PoyiJournalSyncApi' -ErrorAction SilentlyContinue
@@ -156,6 +212,8 @@ if ($null -eq $firewallRule) {
     $firewallRule | Get-NetFirewallAddressFilter | Set-NetFirewallAddressFilter `
         -RemoteAddress LocalSubnet | Out-Null
 }
+
+Reserve-JournalPorts -StartPort 8780 -Count 2
 
 & $serviceExe start
 if ($LASTEXITCODE -ne 0) { throw 'PoyiJournalMcp service failed to start.' }
