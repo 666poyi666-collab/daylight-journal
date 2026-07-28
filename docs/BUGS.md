@@ -33,6 +33,7 @@
 | BUG-014 | 2026-07 | ChatGPT 不会把普通 JSON URI 自动读取为 MCP Resource | `journal_get_entry` 改为标准 Resource 内容块，结构化结果只附带 `resourceIncluded` 与长度；真实 ChatGPT 调用通过且正文未输出 |
 | BUG-015 | 2026-07 | 升级 MCP 时依赖服务 Tunnel 被 Windows 停止后没有恢复 | 安装脚本记忆升级前状态，在 MCP ready 后恢复并等待 Tunnel ready；实际升级回归通过 |
 | BUG-016 | 2026-07 | 服务验证发现敏感日志时仍可能以退出码 0 结束 | 匿名认证、LAN 隔离、单监听进程和敏感值扫描均改为硬断言；管理员上下文验证退出码 0 |
+| BUG-017 | 2026-07 | 浏览器默认 `fetch` 作为客户端成员调用时触发 `Illegal invocation`，V2 outbox 无法发出 | 默认 transport 改为保持浏览器全局调用语义；入口 E2E 捕获真实非空 mutation exchange |
 
 ## 新 Bug 模板
 

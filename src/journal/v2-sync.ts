@@ -412,7 +412,7 @@ export class JournalV2SyncClient {
     this.deviceToken = options.deviceToken.trim()
     this.root = options.rootKey
     this.store = options.store
-    this.fetcher = options.fetcher ?? fetch
+    this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init))
     this.encrypted = new JournalEncryptedSync(options.store)
   }
 

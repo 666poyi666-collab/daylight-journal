@@ -54,6 +54,7 @@ async function openApp({
   const page = await context.newPage()
   if (!screenshotsEnabled) page.screenshot = async () => Buffer.alloc(0)
   const requests = []
+  const mutationWaiters = []
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('console', (message) => {
@@ -92,6 +93,9 @@ async function openApp({
     }
     const envelope = JSON.parse(request.postData() || '{}')
     requests.push(envelope)
+    if (envelope.mutations.length > 0) {
+      for (const resolve of mutationWaiters.splice(0)) resolve(envelope)
+    }
     const changedAt = new Date().toISOString()
     await route.fulfill({
       status: 200,
@@ -144,7 +148,18 @@ async function openApp({
     console.error('Page content:', (await page.content()).slice(0, 2_000))
     throw error
   }
-  return { context, page, requests, errors }
+  const waitForMutationExchange = (timeoutMs = 10_000) => {
+    const captured = requests.find((request) => request.mutations.length > 0)
+    if (captured) return Promise.resolve(captured)
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timed out waiting for a V2 mutation exchange: ${errors.join(' | ')}`)), timeoutMs)
+      mutationWaiters.push((envelope) => {
+        clearTimeout(timer)
+        resolve(envelope)
+      })
+    })
+  }
+  return { context, page, requests, errors, waitForMutationExchange }
 }
 
 try {
@@ -164,7 +179,7 @@ try {
 
   {
     const session = await openApp({ viewport: { width: 1440, height: 900 } })
-    const { context, page, requests, errors } = session
+    const { context, page, requests, errors, waitForMutationExchange } = session
     await page.getByLabel('日记标题').fill('快速保存回归')
     await page.getByLabel('日记正文').fill('最后一段输入必须立即留在本机')
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -187,7 +202,7 @@ try {
       await page.getByLabel('日记正文').inputValue(),
       '图片处理中继续输入也不能被覆盖',
     )
-    await page.waitForTimeout(700)
+    await waitForMutationExchange()
     assert(requests.some((request) => request.mutations.length > 0))
     assert(requests.every((request) => !JSON.stringify(request).includes('图片处理中继续输入也不能被覆盖')))
     await page.screenshot({
