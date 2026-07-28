@@ -21,6 +21,11 @@ test('encrypted attachments reject tampering and retain resumable upload state',
   const attachment = await encryptAttachment(root, mutation, `journal_entry/2026-07-28/${mutation.opId}/cover`, new Uint8Array([1, 2, 3]))
   mutation.objects = [attachment.ref]; await sync.queue(mutation, [attachment]); await sync.markAttachmentUploaded(attachment.ref.objectKey)
   assert.deepEqual(await decryptAttachment(root, mutation, (await store.read()).attachments[attachment.ref.objectKey]), new Uint8Array([1, 2, 3]))
+  const mismatchedManifest = {
+    ...attachment,
+    ref: { ...attachment.ref, ciphertextBytes: attachment.ref.ciphertextBytes + 1 },
+  }
+  await assert.rejects(() => decryptAttachment(root, mutation, mismatchedManifest), /attachment_integrity_failed/)
   const corrupt = {
     ...attachment,
     ciphertext: `${attachment.ciphertext[0] === 'A' ? 'B' : 'A'}${attachment.ciphertext.slice(1)}`,

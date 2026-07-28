@@ -346,6 +346,7 @@ test('App production entry is V2-only', async () => {
   const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
   assert.match(appSource, /JournalV2SyncClient/)
   assert.match(appSource, /queueDelete/)
+  assert.match(appSource, /syncMutationInFlight/)
   assert.match(appSource, /JOURNAL_ROOT_KEY_STORAGE_KEY/)
   for (const forbidden of ['/journal/all', '/journal/sync', '/sync/v1/', '/sync/push']) {
     assert.equal(appSource.includes(forbidden), false, forbidden)
@@ -380,14 +381,17 @@ test('V2 client covers create, update, first pull, attachment, conflict, delete 
   const tokenB = authority.approve('journal-client-b', 'b')
   const tokenC = authority.approve('journal-client-c', 'c')
   const tokenD = authority.approve('journal-client-d', 'd')
+  const tokenE = authority.approve('journal-client-e', 'e')
   const storeA = new MemoryStore()
   const storeB = new MemoryStore()
   const storeC = new MemoryStore()
   const storeD = new MemoryStore()
+  const storeE = new MemoryStore()
   const clientA = new JournalV2SyncClient({ baseUrl, deviceToken: tokenA, rootKey, store: storeA })
   const clientB = new JournalV2SyncClient({ baseUrl, deviceToken: tokenB, rootKey, store: storeB })
   const clientC = new JournalV2SyncClient({ baseUrl, deviceToken: tokenC, rootKey, store: storeC })
   const clientD = new JournalV2SyncClient({ baseUrl, deviceToken: tokenD, rootKey, store: storeD })
+  const clientE = new JournalV2SyncClient({ baseUrl, deviceToken: tokenE, rootKey, store: storeE })
   const date = '2026-07-28'
   const coverBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
   const coverImage = `data:image/png;base64,${coverBytes.toString('base64')}`
@@ -406,6 +410,11 @@ test('V2 client covers create, update, first pull, attachment, conflict, delete 
     const firstPull = await clientB.synchronize({})
     assert.equal(firstPull.entries[date].content, createdMarker)
     assert.equal(firstPull.entries[date].coverImage, coverImage)
+
+    for (const object of authority.objects.values()) object.tombstoned = true
+    await assert.rejects(() => clientE.synchronize({}), /attachment_restore_state_missing/)
+    assert.equal(storeE.value.cursor, null, 'an incomplete attachment pull must not advance the cursor')
+    for (const object of authority.objects.values()) object.tombstoned = false
 
     const updatedMarker = 'APP_V2_UPDATE_PRIVATE_5d42'
     plaintextMarkers.push(updatedMarker)

@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- V2 首次拉取在当前附件缺失或 manifest 不匹配时不再推进 cursor，并串行化显式删除与在途同步，避免本地原子快照被并发覆盖。
 - 将 Journal Tunnel 健康端口从 Windows 保留范围内的 8987 迁移到 8887，并补齐 Secure MCP
   Tunnel doctor 所需的 HTTP MCP OAuth 发现元数据。
 - Tunnel doctor 改用临时 loopback 端口，允许在正式 Tunnel 服务运行时完成诊断。

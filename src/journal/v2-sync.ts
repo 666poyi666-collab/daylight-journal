@@ -370,12 +370,21 @@ function assertManifestHeaders(response: Response, ref: EncryptedObjectRef): voi
   }
 }
 
-function refsForResponse(response: ExchangeResponse): EncryptedObjectRef[] {
+function latestChangesForResponse(response: ExchangeResponse): EncryptedChange[] {
   const latest = new Map<string, EncryptedChange>()
-  for (const change of response.changes) latest.set(change.entityId, change)
-  const refs = [...latest.values()].flatMap((change) => change.operation === 'upsert' ? change.objects : [])
+  for (const change of response.changes) {
+    const current = latest.get(change.entityId)
+    if (!current || change.revision > current.revision) latest.set(change.entityId, change)
+  }
+  return [...latest.values()]
+}
+
+function refsForResponse(response: ExchangeResponse): EncryptedObjectRef[] {
+  const refs = latestChangesForResponse(response)
+    .flatMap((change) => change.operation === 'upsert' ? change.objects : [])
   for (const conflict of response.conflicts) {
     if (conflict.current?.operation === 'upsert') refs.push(...conflict.current.objects)
+    if (conflict.candidate?.operation === 'upsert') refs.push(...conflict.candidate.objects)
   }
   return [...new Map(refs.map((ref) => [ref.objectKey, ref])).values()]
 }
@@ -508,10 +517,11 @@ export class JournalV2SyncClient {
       parsePayload(await decryptMutation(this.root, mutation), mutation.entityId, mutation.objects.length)
       for (const ref of mutation.objects) {
         const attachment = downloaded.get(ref.objectKey)
-        if (attachment) await decryptAttachment(this.root, mutation, attachment)
+        if (!attachment) throw new Error('attachment_restore_state_missing')
+        await decryptAttachment(this.root, mutation, attachment)
       }
     }
-    for (const change of response.changes) await validate(changeAsMutation(change))
+    for (const change of latestChangesForResponse(response)) await validate(changeAsMutation(change))
     for (const conflict of response.conflicts) {
       if (conflict.current) await validate(stateAsMutation(conflict.current))
       if (conflict.candidate) await validate(conflict.candidate)

@@ -301,9 +301,12 @@ export async function decryptAttachment(
   upload: AttachmentUpload,
 ): Promise<Uint8Array> {
   const { ref } = upload
+  const expectedRef = mutation.objects.find((object) => object.objectKey === ref.objectKey)
   const encrypted = fromBase64Url(upload.ciphertext)
   const aad = stableJson(objectAad(mutation, ref.objectKey))
   if (
+    !expectedRef ||
+    stableJson(expectedRef) !== stableJson(ref) ||
     ref.keyVersion !== root.keyVersion ||
     encrypted.byteLength !== ref.ciphertextBytes ||
     await sha256(encrypted) !== ref.ciphertextSha256 ||

@@ -151,6 +151,7 @@ function App() {
   const saveTimer = useRef<number | undefined>(undefined)
   const reviewTimer = useRef<number | undefined>(undefined)
   const syncInFlight = useRef<{ epoch: number; promise: Promise<boolean> } | null>(null)
+  const syncMutationInFlight = useRef<Promise<void> | null>(null)
   const syncConfigEpochRef = useRef(0)
   const revisionRef = useRef(0)
   const syncedRevisionRef = useRef(-1)
@@ -302,6 +303,15 @@ function App() {
   }, [selectedDate, todayKey])
 
   const synchronize = useCallback(async (): Promise<boolean> => {
+    const pendingMutation = syncMutationInFlight.current
+    if (pendingMutation) {
+      try {
+        await pendingMutation
+      } catch {
+        setSyncState('offline')
+        return false
+      }
+    }
     const epoch = syncConfigEpochRef.current
     const active = syncInFlight.current
     if (active?.epoch === epoch) return active.promise
@@ -443,7 +453,15 @@ function App() {
     if (!window.confirm('删除整篇日记？删除会同步到其他设备，之后仍可在同一天重新写作。')) return
     setSyncState('syncing')
     try {
-      await createSyncClient().queueDelete(date)
+      const active = syncInFlight.current
+      if (active) await active.promise
+      const mutation = Promise.resolve().then(() => createSyncClient().queueDelete(date))
+      syncMutationInFlight.current = mutation
+      try {
+        await mutation
+      } finally {
+        if (syncMutationInFlight.current === mutation) syncMutationInFlight.current = null
+      }
       const next = { ...entriesRef.current }
       delete next[date]
       entriesRef.current = next
