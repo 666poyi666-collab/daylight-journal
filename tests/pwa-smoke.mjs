@@ -54,6 +54,7 @@ const context = await browser.newContext({
   serviceWorkers: 'allow',
 })
 const page = await context.newPage()
+if (process.env.NO_SCREENSHOTS === '1') page.screenshot = async () => Buffer.alloc(0)
 const browserErrors = []
 page.on('pageerror', (error) => browserErrors.push(error.message))
 page.on('requestfailed', (request) => {

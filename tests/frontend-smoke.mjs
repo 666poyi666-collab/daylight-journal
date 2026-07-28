@@ -15,6 +15,7 @@ if (!executablePath) throw new Error('Chrome or Edge executable was not found')
 
 const artifactDir = path.join(os.tmpdir(), 'daylight-journal-e2e')
 fs.mkdirSync(artifactDir, { recursive: true })
+const screenshotsEnabled = process.env.NO_SCREENSHOTS !== '1'
 const storageKey = 'daylight-journal-entries-v1'
 const syncToken = `dj1.e2e-device.${'a'.repeat(43)}`
 const rootKey = `jk1.1.${'A'.repeat(43)}`
@@ -51,6 +52,7 @@ async function openApp({
 }) {
   const context = await browser.newContext({ viewport, reducedMotion })
   const page = await context.newPage()
+  if (!screenshotsEnabled) page.screenshot = async () => Buffer.alloc(0)
   const requests = []
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
@@ -509,9 +511,11 @@ try {
     await textarea.pressSequentially('\n稍后回到同一段继续写。')
     await page.getByLabel('日记标题').click()
     assert.equal(await firstBlock.locator('.inline-write-stop').count(), 2)
-    await firstBlock.screenshot({
-      path: path.join(artifactDir, 'phone-inline-timestamps.png'),
-    })
+    if (screenshotsEnabled) {
+      await firstBlock.screenshot({
+        path: path.join(artifactDir, 'phone-inline-timestamps.png'),
+      })
+    }
 
     await page.getByRole('button', { name: '另起一段', exact: true }).click()
     assert.equal(await page.locator('.journal-block').count(), 2)
