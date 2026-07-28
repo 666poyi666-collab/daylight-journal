@@ -30,16 +30,15 @@ import { HistoryPage } from './pages/HistoryPage.tsx'
 import { SettingsPage } from './pages/SettingsPage.tsx'
 import {
   applyEntryPatch,
-  decodeJournalEntries,
   emptyEntry,
   hasEntryContent,
   hasReviewableText,
-  mergeEntries,
   type JournalEntries,
   type JournalEntry,
 } from './journal/model.ts'
 import {
   SETTINGS_KEY,
+  getBrowserStorage,
   loadJournalEntries,
   persistJournalEntries,
   preserveRecoveryValue,
@@ -49,6 +48,18 @@ import {
 } from './journal/storage.ts'
 import type { SaveState, SyncState } from './journal/status.ts'
 import { buildReviewPrompt } from './journal/review.ts'
+import {
+  initializeRootKey,
+  parseRootKey,
+  serializeRootKey,
+  type RootKeyBundle,
+} from './journal/encrypted-sync.ts'
+import {
+  BrowserSyncStore,
+  JOURNAL_ROOT_KEY_STORAGE_KEY,
+  JournalV2SyncClient,
+  deviceIdFromToken,
+} from './journal/v2-sync.ts'
 import './editorial-ui.css'
 
 type View = 'today' | 'calendar' | 'history' | 'settings'
@@ -120,6 +131,9 @@ function App() {
   const [journalApiToken, setJournalApiToken] = useState(
     () => readStorageValue(JOURNAL_API_TOKEN_KEY) || '',
   )
+  const [journalRootKey, setJournalRootKey] = useState<RootKeyBundle | null>(
+    () => parseRootKey(readStorageValue(JOURNAL_ROOT_KEY_STORAGE_KEY) || ''),
+  )
   const [reviewLaunched, setReviewLaunched] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [chatGptUrl, setChatGptUrl] = useState(() => {
@@ -137,7 +151,6 @@ function App() {
   const saveTimer = useRef<number | undefined>(undefined)
   const reviewTimer = useRef<number | undefined>(undefined)
   const syncInFlight = useRef<Promise<boolean> | null>(null)
-  const pushChain = useRef<Promise<boolean>>(Promise.resolve(true))
   const revisionRef = useRef(0)
   const syncedRevisionRef = useRef(-1)
   const recoveryRawRef = useRef(initialLoad.raw)
@@ -249,86 +262,61 @@ function App() {
     return result
   }, [])
 
-  const pushEntries = useCallback(
-    (snapshot: JournalEntries, revision = revisionRef.current): Promise<boolean> => {
-      const run = pushChain.current
-        .catch(() => false)
-        .then(async () => {
-          const payload = Object.values(snapshot).filter(hasEntryContent)
-          setSyncState('syncing')
-          if (!payload.length) {
-            if (revision >= syncedRevisionRef.current) {
-              syncedRevisionRef.current = revision
-            }
-            if (revision === revisionRef.current) setSyncState('synced')
-            return true
-          }
-          try {
-            const response = await fetch(`${journalApiUrl}/journal/sync`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(journalApiToken
-                  ? { Authorization: `Bearer ${journalApiToken}` }
-                  : {}),
-              },
-              body: JSON.stringify(payload),
-            })
-            if (!response.ok) throw new Error(`Sync failed: ${response.status}`)
-            syncedRevisionRef.current = Math.max(
-              syncedRevisionRef.current,
-              revision,
-            )
-            if (revision === revisionRef.current) setSyncState('synced')
-            return true
-          } catch {
-            if (revision === revisionRef.current) setSyncState('offline')
-            return false
-          }
-        })
-      pushChain.current = run
-      return run
-    },
-    [journalApiToken, journalApiUrl],
-  )
+  useEffect(() => {
+    if (journalRootKey) return
+    let cancelled = false
+    void initializeRootKey().then((bundle) => {
+      if (cancelled) return
+      const result = writeStorageValue(
+        JOURNAL_ROOT_KEY_STORAGE_KEY,
+        serializeRootKey(bundle),
+      )
+      if (!result.ok) {
+        setStorageIssue(result.issue)
+        setSyncState('offline')
+        return
+      }
+      setJournalRootKey(bundle)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [journalRootKey])
+
+  const createSyncClient = useCallback(() => {
+    const storage = getBrowserStorage()
+    const deviceId = deviceIdFromToken(journalApiToken)
+    if (!storage || !deviceId || !journalRootKey) throw new Error('sync_not_configured')
+    return new JournalV2SyncClient({
+      baseUrl: journalApiUrl,
+      deviceToken: journalApiToken,
+      rootKey: journalRootKey,
+      store: new BrowserSyncStore(storage, journalApiUrl, deviceId),
+    })
+  }, [journalApiToken, journalApiUrl, journalRootKey])
 
   useEffect(() => {
     if (selectedDate === previousTodayRef.current) setSelectedDate(todayKey)
     previousTodayRef.current = todayKey
   }, [selectedDate, todayKey])
 
-  const flushLatestEntries = useCallback(async () => {
-    let attemptedRevision = -1
-    while (attemptedRevision !== revisionRef.current) {
-      attemptedRevision = revisionRef.current
-      const ok = await pushEntries(entriesRef.current, attemptedRevision)
-      if (!ok) return false
-    }
-    return true
-  }, [pushEntries])
-
   const synchronize = useCallback(async (): Promise<boolean> => {
     if (syncInFlight.current) return syncInFlight.current
     const run = (async () => {
       setSyncState('syncing')
       try {
-        const response = await fetch(`${journalApiUrl}/journal/all`, {
-          headers: journalApiToken
-            ? { Authorization: `Bearer ${journalApiToken}` }
-            : {},
-        })
-        if (!response.ok) throw new Error(`Pull failed: ${response.status}`)
-        const remote = await response.json()
-        const decoded = decodeJournalEntries(remote)
-        if (decoded.invalidRoot) throw new Error('Invalid remote journal data')
-        const merged = mergeEntries(entriesRef.current, decoded.entries)
-        entriesRef.current = merged
-        revisionRef.current += 1
-        setEntries(merged)
-        const persisted = persistSnapshot(merged)
+        const startedAtRevision = revisionRef.current
+        const client = createSyncClient()
+        const result = await client.synchronize(entriesRef.current)
+        if (startedAtRevision !== revisionRef.current) return true
+        entriesRef.current = result.entries
+        setEntries(result.entries)
+        const persisted = persistSnapshot(result.entries)
         if (!persisted.ok) setSaveState('error')
         else setSaveState('saved')
-        return await flushLatestEntries()
+        syncedRevisionRef.current = startedAtRevision
+        setSyncState('synced')
+        return true
       } catch {
         setSyncState('offline')
         return false
@@ -340,16 +328,27 @@ function App() {
     } finally {
       syncInFlight.current = null
     }
-  }, [flushLatestEntries, journalApiToken, journalApiUrl, persistSnapshot])
+  }, [createSyncClient, persistSnapshot])
+
+  const flushLatestEntries = useCallback(async () => {
+    let attemptedRevision = -1
+    while (attemptedRevision !== revisionRef.current) {
+      attemptedRevision = revisionRef.current
+      const ok = await synchronize()
+      if (!ok) return false
+    }
+    return true
+  }, [synchronize])
 
   useEffect(() => {
-    void synchronize();
-    const retry = () => void synchronize();
+    if (!journalRootKey) return
+    void flushLatestEntries()
+    const retry = () => void flushLatestEntries()
     const resume = () => {
-      if (document.visibilityState === "visible") void synchronize();
+      if (document.visibilityState === "visible") void flushLatestEntries()
     };
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") void synchronize();
+      if (document.visibilityState === "visible") void flushLatestEntries()
     }, 30_000);
     window.addEventListener("online", retry);
     document.addEventListener("visibilitychange", resume);
@@ -358,7 +357,7 @@ function App() {
       window.removeEventListener("online", retry);
       document.removeEventListener("visibilitychange", resume);
     };
-  }, [synchronize]);
+  }, [flushLatestEntries, journalRootKey]);
 
   useEffect(() => {
     return () => {
@@ -432,6 +431,25 @@ function App() {
     saveTimer.current = window.setTimeout(() => {
       void flushLatestEntries()
     }, 500)
+  }
+
+  async function deleteEntry(date: string) {
+    if (!hasEntryContent(entriesRef.current[date])) return
+    if (!window.confirm('删除整篇日记？删除会同步到其他设备，之后仍可在同一天重新写作。')) return
+    setSyncState('syncing')
+    try {
+      await createSyncClient().queueDelete(date)
+      const next = { ...entriesRef.current }
+      delete next[date]
+      entriesRef.current = next
+      revisionRef.current += 1
+      setEntries(next)
+      const persisted = persistSnapshot(next)
+      setSaveState(persisted.ok ? 'saved' : 'error')
+      await flushLatestEntries()
+    } catch {
+      setSyncState('offline')
+    }
   }
 
   function captureScrollPosition(currentView: View) {
@@ -810,6 +828,7 @@ function App() {
                   )
                 }
                 onUpdate={(patch) => updateEntry(selectedDate, patch)}
+                onDelete={() => void deleteEntry(selectedDate)}
                 onOpenChatGpt={openChatGpt}
               />
             )}
@@ -839,15 +858,25 @@ function App() {
                 defaultChatGptUrl={CHATGPT_PROJECT_URL}
                 journalApiUrl={journalApiUrl}
                 journalApiToken={journalApiToken}
+                journalRootKey={journalRootKey ? serializeRootKey(journalRootKey) : ''}
                 syncState={syncState}
                 onCheckConnection={synchronize}
-                onSyncConfig={(url, token) => {
+                onSyncConfig={(url, token, rootKeyValue) => {
                   const normalizedUrl = safeHttpUrl(url)
                   const normalizedToken = token.trim()
-                  if (!normalizedUrl || normalizedToken.length < 32) return false
+                  const normalizedRootKey = parseRootKey(rootKeyValue)
+                  if (
+                    !normalizedUrl ||
+                    !deviceIdFromToken(normalizedToken) ||
+                    !normalizedRootKey
+                  ) return false
                   const normalizedServiceUrl = normalizedUrl.replace(/\/$/, '')
                   const urlResult = writeStorageValue(JOURNAL_API_URL_KEY, normalizedServiceUrl)
                   const tokenResult = writeStorageValue(JOURNAL_API_TOKEN_KEY, normalizedToken)
+                  const rootKeyResult = writeStorageValue(
+                    JOURNAL_ROOT_KEY_STORAGE_KEY,
+                    serializeRootKey(normalizedRootKey),
+                  )
                   if (!urlResult.ok) {
                     setStorageIssue(urlResult.issue)
                     return false
@@ -856,8 +885,14 @@ function App() {
                     setStorageIssue(tokenResult.issue)
                     return false
                   }
+                  if (!rootKeyResult.ok) {
+                    setStorageIssue(rootKeyResult.issue)
+                    return false
+                  }
                   setJournalApiUrl(normalizedServiceUrl)
                   setJournalApiToken(normalizedToken)
+                  setJournalRootKey(normalizedRootKey)
+                  setSyncState('syncing')
                   return true
                 }}
                 onChatGptUrl={(value) => {

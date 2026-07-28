@@ -10,10 +10,11 @@ type SettingsPageProps = {
   defaultChatGptUrl: string
   journalApiUrl: string
   journalApiToken: string
+  journalRootKey: string
   syncState: SyncState
   onCheckConnection: () => Promise<boolean>
   onChatGptUrl: (value: string) => void
-  onSyncConfig: (url: string, token: string) => boolean
+  onSyncConfig: (url: string, token: string, rootKey: string) => boolean
   entries: JournalEntry[]
   storageIssue: StorageIssue | null
 }
@@ -23,6 +24,7 @@ export function SettingsPage({
   defaultChatGptUrl,
   journalApiUrl,
   journalApiToken,
+  journalRootKey,
   syncState,
   onCheckConnection,
   onChatGptUrl,
@@ -35,6 +37,7 @@ export function SettingsPage({
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
   const [serviceUrl, setServiceUrl] = useState(journalApiUrl)
   const [serviceToken, setServiceToken] = useState(journalApiToken)
+  const [serviceRootKey, setServiceRootKey] = useState(journalRootKey)
   const [syncConfigSaved, setSyncConfigSaved] = useState(false)
   const exportTimer = useRef<number | undefined>(undefined)
   const totalWords = entries.reduce(
@@ -45,6 +48,10 @@ export function SettingsPage({
   useEffect(() => {
     return () => window.clearTimeout(exportTimer.current)
   }, [])
+
+  useEffect(() => {
+    setServiceRootKey(journalRootKey)
+  }, [journalRootKey])
 
   async function checkConnection() {
     setChecking(true)
@@ -72,7 +79,7 @@ export function SettingsPage({
   }
 
   function saveSyncConfig() {
-    const saved = onSyncConfig(serviceUrl, serviceToken)
+    const saved = onSyncConfig(serviceUrl, serviceToken, serviceRootKey)
     setSyncConfigSaved(saved)
     if (saved) setCheckedAt(null)
   }
@@ -123,13 +130,17 @@ export function SettingsPage({
               <button
                 className="connection-check"
                 onClick={saveSyncConfig}
-                disabled={!/^https?:\/\//i.test(serviceUrl) || serviceToken.trim().length < 32}
+                disabled={
+                  !/^https?:\/\//i.test(serviceUrl) ||
+                  !/^dj1\.[A-Za-z0-9][A-Za-z0-9_-]{2,127}\.[A-Za-z0-9_-]{32,}$/.test(serviceToken.trim()) ||
+                  !/^jk1\.[1-9][0-9]*\.[A-Za-z0-9_-]{43}$/.test(serviceRootKey.trim())
+                }
               >
                 {syncConfigSaved ? <Check /> : <Save />}
                 {syncConfigSaved ? '已保存' : '保存'}
               </button>
             </div>
-            <p>配置 Journal 服务地址和独立配对令牌。</p>
+            <p>配置 Journal V2 服务、独立设备令牌和端到端加密密钥。</p>
             <div className="settings-fields">
               <input
                 type="url"
@@ -152,7 +163,19 @@ export function SettingsPage({
                 placeholder="配对令牌"
                 aria-label="Journal 同步服务配对令牌"
               />
+              <input
+                type="password"
+                value={serviceRootKey}
+                onChange={(event) => {
+                  setServiceRootKey(event.target.value)
+                  setSyncConfigSaved(false)
+                }}
+                autoComplete="off"
+                placeholder="jk1.1.…"
+                aria-label="Journal 端到端加密密钥"
+              />
             </div>
+            <small>新设备首次恢复前必须安全传入同一把 jk1 密钥；密钥只保存在本机，不发送到服务端。</small>
           </div>
         </section>
         <section>

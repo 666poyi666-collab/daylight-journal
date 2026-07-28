@@ -152,6 +152,7 @@ export function EditorPage({
   onOpenDate,
   onChangeDate,
   onUpdate,
+  onDelete,
   onOpenChatGpt,
 }: {
   entry: JournalEntry;
@@ -167,6 +168,7 @@ export function EditorPage({
   onOpenDate: (date: string) => void;
   onChangeDate: (delta: number) => void;
   onUpdate: (patch: Partial<JournalEntry>) => void;
+  onDelete: () => void;
   onOpenChatGpt: () => void;
 }) {
   const blockTextareas = useRef(new Map<string, HTMLTextAreaElement>())
@@ -774,6 +776,11 @@ export function EditorPage({
           <button className="add-journal-block" onClick={addBlock}>
             <Plus />另起一段
           </button>
+          {hasEntry && (
+            <button className="delete-entry-button" onClick={onDelete}>
+              <Trash2 />删除整篇
+            </button>
+          )}
           <div className="editor-footer">
             <time
               className={`editor-save ${saveState}`}

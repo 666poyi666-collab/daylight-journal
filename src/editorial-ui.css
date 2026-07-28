@@ -3843,3 +3843,19 @@ html[data-keyboard-input] .mobile-nav {
     transform: none;
   }
 }
+.delete-entry-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--color-danger, #9a4f43);
+  font: inherit;
+  cursor: pointer;
+}
+
+.delete-entry-button svg {
+  width: 1rem;
+  height: 1rem;
+}
