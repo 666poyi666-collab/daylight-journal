@@ -1,15 +1,11 @@
 import {
   JournalEncryptedSync,
   base64Url,
-  decryptAttachment,
   decryptMutation,
   emptySyncSnapshot,
-  encryptAttachment,
   encryptMutation,
-  fromBase64Url,
   mutationFromRecord,
   stableJson,
-  type AttachmentUpload,
   type EncryptedAcknowledgement,
   type EncryptedChange,
   type EncryptedConflict,
@@ -38,7 +34,6 @@ type Fetcher = typeof fetch
 
 type JournalEncryptedPayload = {
   entry: Omit<JournalEntry, 'coverImage'>
-  coverMediaType: string | null
 }
 
 type ExchangeResponse = {
@@ -240,46 +235,21 @@ function normalizeBaseUrl(value: string): string {
   return url.href.replace(/\/$/, '')
 }
 
-function parseDataUrl(value: string): { mediaType: string; bytes: Uint8Array } {
-  const match = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(value)
-  if (!match) throw new Error('invalid_cover_data_url')
-  const binary = atob(match[2])
-  return {
-    mediaType: match[1],
-    bytes: Uint8Array.from(binary, (char) => char.charCodeAt(0)),
-  }
-}
-
-function bytesToDataUrl(mediaType: string, bytes: Uint8Array): string {
-  let binary = ''
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return `data:${mediaType};base64,${btoa(binary)}`
-}
-
 function payloadFromEntry(entry: JournalEntry): JournalEncryptedPayload {
-  const { coverImage, ...withoutCover } = entry
-  return {
-    entry: withoutCover,
-    coverMediaType: coverImage ? parseDataUrl(coverImage).mediaType : null,
-  }
+  const { coverImage: _localOnlyCover, ...withoutCover } = entry
+  return { entry: withoutCover }
 }
 
-function parsePayload(value: unknown, entityId: string, objectCount: number): JournalEncryptedPayload {
+function parsePayload(value: unknown, entityId: string): JournalEncryptedPayload {
   if (!isRecord(value) || !isRecord(value.entry)) throw new Error('invalid_encrypted_journal_payload')
-  if (value.coverMediaType !== null && !/^image\/(?:jpeg|png|webp|gif)$/.test(String(value.coverMediaType))) {
-    throw new Error('invalid_encrypted_journal_payload')
-  }
-  if ((value.coverMediaType === null ? 0 : 1) !== objectCount || Object.hasOwn(value.entry, 'coverImage')) {
+  if (Object.hasOwn(value.entry, 'coverImage')) {
     throw new Error('invalid_encrypted_journal_payload')
   }
   const decoded = decodeJournalEntries({ [entityId]: value.entry })
   if (decoded.invalidRoot || decoded.invalidKeys.length || !decoded.entries[entityId]) {
     throw new Error('invalid_encrypted_journal_payload')
   }
-  return {
-    entry: decoded.entries[entityId],
-    coverMediaType: value.coverMediaType as string | null,
-  }
+  return { entry: decoded.entries[entityId] }
 }
 
 function stateAsMutation(state: EncryptedState): EncryptedMutation {
@@ -354,22 +324,6 @@ function parseExchangeResponse(value: unknown): ExchangeResponse {
   return value as ExchangeResponse
 }
 
-function manifestHeaders(ref: EncryptedObjectRef): Record<string, string> {
-  return {
-    'X-Ciphertext-Sha256': ref.ciphertextSha256,
-    'X-Ciphertext-Bytes': String(ref.ciphertextBytes),
-    'X-Object-Nonce': ref.nonce,
-    'X-Object-Aad-Hash': ref.aadHash,
-    'X-Key-Version': String(ref.keyVersion),
-  }
-}
-
-function assertManifestHeaders(response: Response, ref: EncryptedObjectRef): void {
-  for (const [name, expected] of Object.entries(manifestHeaders(ref))) {
-    if (response.headers.get(name) !== expected) throw new Error('attachment_manifest_mismatch')
-  }
-}
-
 function latestChangesForResponse(response: ExchangeResponse): EncryptedChange[] {
   const latest = new Map<string, EncryptedChange>()
   for (const change of response.changes) {
@@ -377,16 +331,6 @@ function latestChangesForResponse(response: ExchangeResponse): EncryptedChange[]
     if (!current || change.revision > current.revision) latest.set(change.entityId, change)
   }
   return [...latest.values()]
-}
-
-function refsForResponse(response: ExchangeResponse): EncryptedObjectRef[] {
-  const refs = latestChangesForResponse(response)
-    .flatMap((change) => change.operation === 'upsert' ? change.objects : [])
-  for (const conflict of response.conflicts) {
-    if (conflict.current?.operation === 'upsert') refs.push(...conflict.current.objects)
-    if (conflict.candidate?.operation === 'upsert') refs.push(...conflict.candidate.objects)
-  }
-  return [...new Map(refs.map((ref) => [ref.objectKey, ref])).values()]
 }
 
 export class JournalV2SyncClient {
@@ -429,7 +373,7 @@ export class JournalV2SyncClient {
     await this.drain(false)
     state = await this.store.read()
     return {
-      entries: await this.materialize(state),
+      entries: this.preserveLocalCovers(await this.materialize(state), localEntries),
       conflictCount: Object.values(state.records).reduce((sum, record) => sum + record.conflicts.length, 0),
     }
   }
@@ -459,38 +403,6 @@ export class JournalV2SyncClient {
     }
   }
 
-  private async uploadAttachment(upload: AttachmentUpload): Promise<void> {
-    const response = await this.fetcher(
-      `${this.baseUrl}/sync/v2/objects/${encodeURIComponent(upload.ref.objectKey)}`,
-      {
-        method: 'PUT',
-        headers: {
-          ...this.headers(),
-          ...manifestHeaders(upload.ref),
-          'Content-Type': 'application/octet-stream',
-        },
-        body: fromBase64Url(upload.ciphertext).buffer as ArrayBuffer,
-      },
-    )
-    if (response.status !== 201 && response.status !== 204) {
-      throw new Error(`attachment_upload_failed:${response.status}`)
-    }
-    assertManifestHeaders(response, upload.ref)
-    await this.encrypted.markAttachmentUploaded(upload.ref.objectKey)
-  }
-
-  private async downloadAttachment(ref: EncryptedObjectRef): Promise<AttachmentUpload | null> {
-    const response = await this.fetcher(
-      `${this.baseUrl}/sync/v2/objects/${encodeURIComponent(ref.objectKey)}`,
-      { headers: this.headers() },
-    )
-    if (response.status === 410) return null
-    if (!response.ok) throw new Error(`attachment_download_failed:${response.status}`)
-    assertManifestHeaders(response, ref)
-    const ciphertext = new Uint8Array(await response.arrayBuffer())
-    return { ref, ciphertext: base64Url(ciphertext), uploaded: true }
-  }
-
   private async exchange(batch: EncryptedMutation[], cursor: string | null): Promise<ExchangeResponse> {
     const response = await this.fetcher(`${this.baseUrl}/sync/v2/exchange`, {
       method: 'POST',
@@ -501,25 +413,17 @@ export class JournalV2SyncClient {
         product: 'journal',
         deviceId: this.deviceId,
         cursor,
-        mutations: batch,
+        mutations: batch.map((mutation) => ({ ...mutation, objects: [] })),
       }),
     })
     if (!response.ok) throw new Error(`v2_exchange_failed:${response.status}`)
     return parseExchangeResponse(await response.json())
   }
 
-  private async validateRemote(
-    response: ExchangeResponse,
-    downloaded: Map<string, AttachmentUpload>,
-  ): Promise<void> {
+  private async validateRemote(response: ExchangeResponse): Promise<void> {
     const validate = async (mutation: EncryptedMutation) => {
       if (mutation.operation === 'delete') return
-      parsePayload(await decryptMutation(this.root, mutation), mutation.entityId, mutation.objects.length)
-      for (const ref of mutation.objects) {
-        const attachment = downloaded.get(ref.objectKey)
-        if (!attachment) throw new Error('attachment_restore_state_missing')
-        await decryptAttachment(this.root, mutation, attachment)
-      }
+      parsePayload(await decryptMutation(this.root, mutation), mutation.entityId)
     }
     for (const change of latestChangesForResponse(response)) await validate(changeAsMutation(change))
     for (const conflict of response.conflicts) {
@@ -534,31 +438,13 @@ export class JournalV2SyncClient {
       let state = await this.store.read()
       if (!exchangeRequired && state.outbox.length === 0) return
       const batch = state.outbox.slice(0, 25)
-      for (const mutation of batch) {
-        for (const ref of mutation.objects) {
-          state = await this.store.read()
-          const attachment = state.attachments[ref.objectKey]
-          if (!attachment) throw new Error('attachment_upload_state_missing')
-          if (!attachment.uploaded) await this.uploadAttachment(attachment)
-        }
-      }
-      state = await this.store.read()
       const response = await this.exchange(batch, state.cursor)
-      const downloaded = new Map<string, AttachmentUpload>()
-      for (const ref of refsForResponse(response)) {
-        const cached = state.attachments[ref.objectKey]
-        const attachment = cached && stableJson(cached.ref) === stableJson(ref)
-          ? cached
-          : await this.downloadAttachment(ref)
-        if (attachment) downloaded.set(ref.objectKey, attachment)
-      }
-      await this.validateRemote(response, downloaded)
+      await this.validateRemote(response)
       await this.encrypted.applyExchange(
         response.acknowledged,
         response.conflicts,
         response.changes,
         response.nextCursor,
-        [...downloaded.values()],
       )
       const next = await this.store.read()
       const progressed = response.acknowledged.length > 0 ||
@@ -580,23 +466,24 @@ export class JournalV2SyncClient {
       const payload = parsePayload(
         await decryptMutation(this.root, mutation),
         entityId,
-        mutation.objects.length,
       )
-      let coverImage: string | undefined
-      if (mutation.objects.length) {
-        const attachment = state.attachments[mutation.objects[0].objectKey]
-        if (!attachment || !payload.coverMediaType) throw new Error('attachment_restore_state_missing')
-        coverImage = bytesToDataUrl(
-          payload.coverMediaType,
-          await decryptAttachment(this.root, mutation, attachment),
-        )
-      }
-      entries[entityId] = {
-        ...payload.entry,
-        ...(coverImage ? { coverImage } : {}),
-      }
+      entries[entityId] = payload.entry
     }
     return entries
+  }
+
+  private preserveLocalCovers(
+    entries: JournalEntries,
+    local: JournalEntries,
+  ): JournalEntries {
+    const preserved = { ...entries }
+    for (const [date, localEntry] of Object.entries(local)) {
+      const entry = preserved[date]
+      if (entry && localEntry.coverImage) {
+        preserved[date] = { ...entry, coverImage: localEntry.coverImage }
+      }
+    }
+    return preserved
   }
 
   private mergeDesired(
@@ -619,7 +506,7 @@ export class JournalV2SyncClient {
       }
     }
     for (const entityId of state.pendingDeletes) delete desired[entityId]
-    return desired
+    return this.preserveLocalCovers(desired, local)
   }
 
   private async reconcile(desired: JournalEntries, initialState: SyncSnapshot): Promise<void> {
@@ -656,19 +543,7 @@ export class JournalV2SyncClient {
         baseRevision,
         operation: 'upsert',
       }, payloadFromEntry(target))
-      const attachments: AttachmentUpload[] = []
-      if (target.coverImage) {
-        const cover = parseDataUrl(target.coverImage)
-        const attachment = await encryptAttachment(
-          this.root,
-          mutation,
-          `journal_entry/${entityId}/${mutation.opId}/cover`,
-          cover.bytes,
-        )
-        mutation.objects = [attachment.ref]
-        attachments.push(attachment)
-      }
-      await this.encrypted.queue(mutation, attachments, target.updatedAt)
+      await this.encrypted.queue(mutation, [], target.updatedAt)
       state = await this.store.read()
       currentEntries[entityId] = target
     }

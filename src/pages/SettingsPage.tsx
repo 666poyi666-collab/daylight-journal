@@ -149,7 +149,7 @@ export function SettingsPage({
                   setServiceUrl(event.target.value)
                   setSyncConfigSaved(false)
                 }}
-                placeholder="http://journal-host.local:8780"
+                placeholder="https://journal-sync.example.com"
                 aria-label="Journal 同步服务地址"
               />
               <input

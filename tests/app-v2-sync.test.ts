@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import test from 'node:test'
 import {
+  decryptMutation,
   emptySyncSnapshot,
   initializeRootKey,
   type EncryptedChange,
@@ -44,6 +45,7 @@ class V2Authority {
   readonly changes: SequencedChange[] = []
   readonly deviceTokens = new Map<string, string>()
   fallbackCalls = 0
+  objectRouteCalls = 0
   failNextExchange = false
   private server = createServer((request, response) => void this.handle(request, response))
 
@@ -135,6 +137,7 @@ class V2Authority {
     }
 
     if (url.pathname.startsWith('/sync/v2/objects/')) {
+      this.objectRouteCalls += 1
       const objectKey = decodeURIComponent(url.pathname.slice('/sync/v2/objects/'.length))
       const parts = objectKey.split('/')
       const entityId = parts[1] ?? ''
@@ -344,6 +347,10 @@ function journalEntry(
 
 test('App production entry is V2-only', async () => {
   const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const androidManifest = await readFile(
+    new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url),
+    'utf8',
+  )
   assert.match(appSource, /JournalV2SyncClient/)
   assert.match(appSource, /queueDelete/)
   assert.match(appSource, /syncMutationInFlight/)
@@ -351,6 +358,9 @@ test('App production entry is V2-only', async () => {
   for (const forbidden of ['/journal/all', '/journal/sync', '/sync/v1/', '/sync/push']) {
     assert.equal(appSource.includes(forbidden), false, forbidden)
   }
+  assert.equal(appSource.includes("'http://127.0.0.1:8780'"), false)
+  assert.match(androidManifest, /android:allowBackup="false"/)
+  assert.match(androidManifest, /android:fullBackupContent="false"/)
   assert.equal(deviceIdFromToken(`dj1.approved-device.${'a'.repeat(43)}`), 'approved-device')
   assert.equal(deviceIdFromToken('unapproved-token'), null)
 })
@@ -373,7 +383,50 @@ test('approved-device snapshots are isolated and corruption fails closed', async
   await assert.rejects(() => approved.read(), /SyntaxError|invalid_sync_snapshot/)
 })
 
-test('V2 client covers create, update, first pull, attachment, conflict, delete and restore without fallback', async () => {
+test('a newer remote text revision keeps the cover that exists only on this device', async () => {
+  const authority = new V2Authority()
+  const baseUrl = await authority.start()
+  const rootKey = await initializeRootKey()
+  const clientA = new JournalV2SyncClient({
+    baseUrl,
+    deviceToken: authority.approve('journal-cover-a', 'f'),
+    rootKey,
+    store: new MemoryStore(),
+  })
+  const clientB = new JournalV2SyncClient({
+    baseUrl,
+    deviceToken: authority.approve('journal-cover-b', 'g'),
+    rootKey,
+    store: new MemoryStore(),
+  })
+  const date = '2026-07-27'
+  const coverImage = `data:image/png;base64,${Buffer.from('local-cover-only').toString('base64')}`
+  const localEntries = {
+    [date]: journalEntry(date, 'LOCAL_TEXT_V1', '2026-07-27T01:00:00.000Z', coverImage),
+  }
+  try {
+    await clientA.synchronize(localEntries)
+    await clientB.synchronize({})
+    await clientB.synchronize({
+      [date]: journalEntry(date, 'REMOTE_TEXT_V2', '2026-07-27T02:00:00.000Z'),
+    })
+
+    const merged = await clientA.synchronize(localEntries)
+
+    assert.equal(merged.entries[date].content, 'REMOTE_TEXT_V2')
+    assert.equal(merged.entries[date].coverImage, coverImage)
+    assert.equal(authority.entities.get(date)?.revision, 2)
+    assert.equal(authority.objectRouteCalls, 0)
+    assert.ok(authority.requests.every((request) => {
+      const envelope = JSON.parse(request.body) as { mutations: EncryptedMutation[] }
+      return envelope.mutations.every((mutation) => mutation.objects.length === 0)
+    }))
+  } finally {
+    await authority.stop()
+  }
+})
+
+test('V2 client covers create, update, first pull, conflict, delete and restore without fallback', async () => {
   const authority = new V2Authority()
   const baseUrl = await authority.start()
   const rootKey = await initializeRootKey()
@@ -404,17 +457,14 @@ test('V2 client covers create, update, first pull, attachment, conflict, delete 
     }
     const created = await clientA.synchronize(createdEntries)
     assert.equal(created.entries[date].content, createdMarker)
+    assert.equal(created.entries[date].coverImage, coverImage)
     assert.equal(authority.entities.get(date)?.revision, 1)
-    assert.ok([...authority.objects.values()].every((object) => !object.body.includes(coverBytes)))
+    assert.equal(authority.objects.size, 0)
 
     const firstPull = await clientB.synchronize({})
     assert.equal(firstPull.entries[date].content, createdMarker)
-    assert.equal(firstPull.entries[date].coverImage, coverImage)
-
-    for (const object of authority.objects.values()) object.tombstoned = true
-    await assert.rejects(() => clientE.synchronize({}), /attachment_restore_state_missing/)
-    assert.equal(storeE.value.cursor, null, 'an incomplete attachment pull must not advance the cursor')
-    for (const object of authority.objects.values()) object.tombstoned = false
+    assert.equal(firstPull.entries[date].coverImage, undefined)
+    assert.equal((await clientE.synchronize({})).entries[date].content, createdMarker)
 
     const updatedMarker = 'APP_V2_UPDATE_PRIVATE_5d42'
     plaintextMarkers.push(updatedMarker)
@@ -423,6 +473,7 @@ test('V2 client covers create, update, first pull, attachment, conflict, delete 
     }
     const updated = await clientA.synchronize(updatedEntries)
     assert.equal(updated.entries[date].content, updatedMarker)
+    assert.equal(updated.entries[date].coverImage, coverImage)
     assert.equal(authority.entities.get(date)?.revision, 2)
 
     const initialC = await clientC.synchronize({})
@@ -435,6 +486,10 @@ test('V2 client covers create, update, first pull, attachment, conflict, delete 
     authority.failNextExchange = true
     await assert.rejects(() => clientC.synchronize(conflictEntries), /v2_exchange_failed:503/)
     assert.equal(storeC.value.outbox.length, 1, 'offline mutation must remain durable')
+    assert.deepEqual(storeC.value.outbox[0].objects, [])
+    const pendingPayload = await decryptMutation(rootKey, storeC.value.outbox[0])
+    assert.equal(JSON.stringify(pendingPayload).includes('coverImage'), false)
+    assert.equal(JSON.stringify(pendingPayload).includes('data:image'), false)
     const stableOperationId = storeC.value.outbox[0].opId
 
     const competingMarker = 'APP_V2_REMOTE_WINNER_02c4'
@@ -446,6 +501,7 @@ test('V2 client covers create, update, first pull, attachment, conflict, delete 
 
     const resolved = await clientC.synchronize(conflictEntries)
     assert.equal(resolved.entries[date].content, conflictMarker)
+    assert.equal(resolved.entries[date].coverImage, coverImage)
     assert.equal(authority.entities.get(date)?.revision, 4)
     assert.equal(storeC.value.records[date].conflicts.length, 1)
     assert.equal(storeC.value.records[date].conflicts[0].candidate?.opId, stableOperationId)
@@ -455,7 +511,6 @@ test('V2 client covers create, update, first pull, attachment, conflict, delete 
     assert.equal(deleted.entries[date], undefined)
     assert.equal(authority.entities.get(date)?.operation, 'delete')
     assert.equal(authority.entities.get(date)?.revision, 5)
-    assert.ok([...authority.objects.values()].every((object) => object.tombstoned))
 
     const restoreMarker = 'APP_V2_RESTORED_PRIVATE_e803'
     plaintextMarkers.push(restoreMarker)
@@ -476,7 +531,22 @@ test('V2 client covers create, update, first pull, attachment, conflict, delete 
     assert.equal(storeD.value.records[date].conflicts[0].candidate?.operation, 'delete')
 
     assert.equal(authority.fallbackCalls, 0)
+    assert.equal(authority.objectRouteCalls, 0)
     assert.ok(authority.requests.every((request) => request.path === '/sync/v2/exchange'))
+    for (const request of authority.requests) {
+      const envelope = JSON.parse(request.body) as { mutations: EncryptedMutation[] }
+      for (const mutation of envelope.mutations) {
+        assert.deepEqual(mutation.objects, [])
+        if (mutation.operation === 'delete') continue
+        const payload = await decryptMutation(rootKey, mutation)
+        const keys: string[] = []
+        JSON.stringify(payload, (key, value: unknown) => {
+          if (key) keys.push(key)
+          return value
+        })
+        assert.equal(keys.some((key) => /cover|base64|path|url/i.test(key)), false)
+      }
+    }
     for (const marker of plaintextMarkers) {
       assert.ok(authority.requests.every((request) => !request.body.includes(marker)), marker)
     }

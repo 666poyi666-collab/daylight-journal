@@ -3,6 +3,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chromium } from 'playwright-core'
+import {
+  decryptMutation,
+  parseRootKey,
+} from '../src/journal/encrypted-sync.ts'
 
 const appUrl = process.env.APP_URL || 'http://127.0.0.1:5173'
 const browserCandidates = [
@@ -54,6 +58,7 @@ async function openApp({
   const page = await context.newPage()
   if (!screenshotsEnabled) page.screenshot = async () => Buffer.alloc(0)
   const requests = []
+  const objectRequests = []
   const mutationWaiters = []
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
@@ -64,21 +69,14 @@ async function openApp({
   })
   await page.route('https://fonts.googleapis.com/**', (route) => route.abort())
   await page.route(/\/sync\/v2\/objects\//, async (route) => {
-    const request = route.request()
-    const headers = request.headers()
-    if (failSync) {
-      await route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"offline-test"}' })
-      return
-    }
+    objectRequests.push({
+      method: route.request().method(),
+      url: route.request().url(),
+    })
     await route.fulfill({
-      status: 201,
-      headers: {
-        'X-Ciphertext-Sha256': headers['x-ciphertext-sha256'],
-        'X-Ciphertext-Bytes': headers['x-ciphertext-bytes'],
-        'X-Object-Nonce': headers['x-object-nonce'],
-        'X-Object-Aad-Hash': headers['x-object-aad-hash'],
-        'X-Key-Version': headers['x-key-version'],
-      },
+      status: 410,
+      contentType: 'application/json',
+      body: '{"error":"object_sync_disabled"}',
     })
   })
   await page.route(/\/sync\/v2\/exchange$/, async (route) => {
@@ -130,6 +128,7 @@ async function openApp({
     ({ storageKey, seed, failStorage, skipSplash, syncToken, rootKey }) => {
       if (skipSplash) sessionStorage.setItem('daylight-splash-seen', '1')
       if (seed) localStorage.setItem(storageKey, JSON.stringify(seed))
+      localStorage.setItem('daylight-journal-api', 'https://journal-sync.e2e.invalid')
       localStorage.setItem('daylight-journal-api-token', syncToken)
       localStorage.setItem('daylight-journal-sync-root-v1', rootKey)
       if (failStorage) {
@@ -159,7 +158,7 @@ async function openApp({
       })
     })
   }
-  return { context, page, requests, errors, waitForMutationExchange }
+  return { context, page, requests, objectRequests, errors, waitForMutationExchange }
 }
 
 try {
@@ -179,7 +178,14 @@ try {
 
   {
     const session = await openApp({ viewport: { width: 1440, height: 900 } })
-    const { context, page, requests, errors, waitForMutationExchange } = session
+    const {
+      context,
+      page,
+      requests,
+      objectRequests,
+      errors,
+      waitForMutationExchange,
+    } = session
     await page.getByLabel('日记标题').fill('快速保存回归')
     await page.getByLabel('日记正文').fill('最后一段输入必须立即留在本机')
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -188,6 +194,8 @@ try {
       await page.getByLabel('日记正文').inputValue(),
       '最后一段输入必须立即留在本机',
     )
+    await page.waitForTimeout(700)
+    requests.length = 0
 
     await page.locator('input[type="file"]').setInputFiles({
       name: 'regression.svg',
@@ -202,8 +210,21 @@ try {
       await page.getByLabel('日记正文').inputValue(),
       '图片处理中继续输入也不能被覆盖',
     )
-    await waitForMutationExchange()
+    const mutationExchange = await waitForMutationExchange()
     assert(requests.some((request) => request.mutations.length > 0))
+    assert.equal(objectRequests.length, 0)
+    const rootBundle = parseRootKey(rootKey)
+    assert(rootBundle)
+    for (const mutation of mutationExchange.mutations) {
+      assert.deepEqual(mutation.objects, [])
+      const payload = await decryptMutation(rootBundle, mutation)
+      const payloadKeys = []
+      JSON.stringify(payload, (key, value) => {
+        if (key) payloadKeys.push(key)
+        return value
+      })
+      assert.equal(payloadKeys.some((key) => /cover|base64|path|url/i.test(key)), false)
+    }
     assert(requests.every((request) => !JSON.stringify(request).includes('图片处理中继续输入也不能被覆盖')))
     await page.screenshot({
       path: path.join(artifactDir, 'desktop.png'),
@@ -370,12 +391,29 @@ try {
   }
 
   {
-    const { context, page, errors } = await openApp({
+    const offlineCover = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
+    const { context, page, objectRequests, errors } = await openApp({
       viewport: { width: 390, height: 844 },
+      seed: {
+        [today]: createSeedEntry(
+          today,
+          '离线封面回归',
+          '带本机封面的文字仍需进入持久队列',
+          { coverImage: offlineCover },
+        ),
+      },
       failSync: true,
     })
-    await page.getByLabel('日记正文').fill('离线时保留在本机的虚构草稿')
     await page.getByRole('button', { name: '重试同步' }).waitFor()
+    const outbox = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((candidate) =>
+        candidate.startsWith('daylight-journal-sync-v2:'),
+      )
+      return key ? JSON.parse(localStorage.getItem(key) || '{}').outbox : []
+    })
+    assert(outbox.length > 0)
+    assert(outbox.every((mutation) => mutation.objects.length === 0))
+    assert.equal(objectRequests.length, 0)
     assert.equal(await page.locator('.chat-mini').textContent(), 'AI 复盘')
     assert.equal(await page.locator('.chat-mini').isDisabled(), true)
     assert(

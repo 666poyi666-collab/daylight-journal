@@ -69,7 +69,7 @@ const JOURNAL_API_TOKEN_KEY = 'daylight-journal-api-token'
 const DEFAULT_JOURNAL_API =
   import.meta.env.VITE_JOURNAL_API_URL ||
   readStorageValue(JOURNAL_API_URL_KEY) ||
-  'http://127.0.0.1:8780'
+  ''
 const CHATGPT_PROJECT_URL =
   import.meta.env.VITE_CHATGPT_PROJECT_URL || 'https://chatgpt.com/'
 const SPLASH_SESSION_KEY = 'daylight-splash-seen'
