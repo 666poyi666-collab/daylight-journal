@@ -47,6 +47,6 @@
     "supportsBidirectionalDelta": false
   },
   "knownGaps": [
-    "Encrypted attachment object transfer, staging OAuth, real-device recovery and PC-off acceptance evidence are pending."
+    "Encrypted attachment object transfer is implemented and covered locally; staging OAuth, deployed R2/D1 revision, real-device recovery and three-round PC-off acceptance evidence are pending."
   ]
 }

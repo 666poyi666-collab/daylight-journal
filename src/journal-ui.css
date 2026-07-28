@@ -517,6 +517,15 @@
   color: var(--danger);
 }
 
+/* 未配对/未建密钥是新设备的常态而非故障：中性提示，不用报警红 */
+.sync-status.setup {
+  color: var(--ink-3);
+}
+
+.sync-status.setup::before {
+  background: var(--accent);
+}
+
 .sync-status.retryable {
   text-decoration: underline;
   text-decoration-style: dotted;
@@ -2660,6 +2669,41 @@
 .settings-fields {
   display: grid;
   gap: 8px;
+}
+
+/* 恢复与设备批准：三个步骤化小节，各自一条发丝线起头，
+ * 小节名用 eyebrow 字距压低视觉重量，JSON 输入折进去不再一字排开 */
+.settings-subsection {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.settings-subsection:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.settings-subsection > header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.settings-subsection > header strong {
+  font-size: var(--t-micro);
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  color: var(--ink-2);
+  text-transform: uppercase;
+}
+
+.settings-subsection > header small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-grid input,

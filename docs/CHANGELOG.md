@@ -7,6 +7,13 @@
 
 ### Added
 
+- 增加 Journal 云 V2 客户端：`SyncEnvelopeV1`、AES-256-GCM/AAD、严格 `c<base36>` cursor、
+  稳定 opId、持久 entity/outbox/flight/conflict/tombstone，以及显式 root 初始化、离线恢复包和
+  绑定 deviceId/public key/nonce 的十分钟单次设备批准。
+- 封面改为独立加密对象：IndexedDB 持久 `object-payloads`、R2 PUT/GET、manifest header/长度/
+  SHA-256/AAD 校验、下载解密 materialization 和 ACK 后原子清理；实体 ciphertext/exchange 不再
+  携带封面 data URL。
+
 - Android 设置页增加局域网 Journal 服务发现，通过原生 NSD 解析电脑发布的
   `_poyi-journal._tcp`；系统 mDNS 解码异常时回退到受限私网 Journal 健康探测，不再要求
   WebView 自己解析 `.local` 名称。
@@ -53,6 +60,15 @@
 
 ### Fixed
 
+- 对象上传成功后 exchange 暂时失败并重启时，相同本地内容不再生成新的 opId/objectKey；
+  客户端保留并重放原 mutation、nonce 与 ciphertext，确认 ACK 后才清理对象 payload。
+- Worker 对象响应补齐 `Access-Control-Expose-Headers`，浏览器现在能读取并验证完整性回执，
+  不再在成功 PUT 后误判失败。
+- Android API 24/25 的 Capacitor binary `file` body 会静默变成零字节：原生桥改用专用 base64
+  object media type，Worker 解码并校验后向 R2 写二进制密文；base64 不进入 exchange 或 D1。
+- root fingerprint 变化前先把旧 wrapped root、entity、outbox、cursor/flight、conflict 与对象
+  payload 一并归档，避免旧空间状态被静默清空或误套新密钥。
+
 - 手机同步文档要求使用 `.local` 地址，但 Android WebView 无法解析且应用没有服务发现实现：
   增加原生发现桥并自动填入当次可达 LAN 地址；同步文档同时明确当前电脑关机限制，避免把
   ChatGPT Secure MCP Tunnel 误认为手机云同步入口。
@@ -97,6 +113,13 @@
   直接引导到设置页的「同步服务配对」。
 
 ### Verified
+
+- 浏览器故障回归覆盖：对象 PUT 先于 exchange；正文、封面 data URL 和设备 token 不进入
+  envelope；对象 ciphertext 不含原文；exchange 503 后整页重启重放同一 opId/objectKey/body；
+  ACK 后 outbox/object-payload 同时为零。
+- 双浏览器设备通过离线恢复包共享 root；第二设备从对象 GET 下载、校验、解密并 materialize
+  标题、正文和封面。Worker 合同覆盖 R2 PUT/幂等重放/GET、metadata 回显、key reuse 拒绝、
+  缺对象拒绝与 API 24/25 base64 transport。
 
 - Redmi 真机通过受限原生 HTTP 自动发现生产 LAN 服务并调用配对接口；生产一次性码首次兑换
   返回 43 字符长期令牌、同码重放 410，验收输出未包含配对码或令牌。

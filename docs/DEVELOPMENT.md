@@ -64,6 +64,26 @@ npm run test:pwa
 同步/MCP 变更还要验证 `/healthz`、`/readyz`、`/metrics`、`/v1/*`、兼容同步接口和相关 MCP 工具，
 测试数据目录必须通过 `JOURNAL_DATA_DIR` 隔离。
 
+云 V2 或封面对象变更还必须在两个仓分别执行：
+
+```powershell
+Set-Location C:\开发\日记复盘
+npm run build
+npm run lint
+npm run test:unit
+npm run test:e2e
+npm run test:pwa
+
+Set-Location C:\开发\mcp开发\journal-cloud-mcp
+npm run typecheck
+npm run test:contract
+npx wrangler deploy --dry-run
+```
+
+前端 E2E 必须拦截 `/sync/v2/exchange` 与 `/sync/v2/objects/*`，不得命中真实服务；至少覆盖
+对象先传、回执 metadata、GET 解密、503 后重启稳定重放和 ACK 清队列。Worker 测试使用隔离的
+本地 D1/R2。不要读取 `.dev.vars`，不要把已有远端 secret 当作测试 fixture。
+
 Windows 服务、Tunnel、Inspector 和 ChatGPT 验收命令见 `MCP-OPERATIONS.md`。不得用
 PersonalMcpGateway 的服务、profile、端口或密钥代替 Journal 独立链路。
 
@@ -72,6 +92,11 @@ PersonalMcpGateway 的服务、profile、端口或密钥代替 Journal 独立链
 6 位一次性码完成配对；长期令牌由应用自动兑换和保存，不进入人工操作。
 调试和生产均禁止以 ADB 转发或用户手填固定 IP 作为长期同步配置。桌面服务是当前共享副本，
 Secure MCP Tunnel 不承载手机同步，因此电脑关机期间只能本地写作。
+
+云 V2 源码存在不等于已经上线。正式标记 PC-off 前必须保存并核对 implementation commit、
+Worker deployment revision、D1 migration ledger、R2 binding、远端探针、双设备 root 恢复和三轮
+PC-off 新建/更新/删除证据；任一缺失时 `.poyi/project-platform.json` 的
+`supportsPcOff` 必须保持 `false`。
 
 ## Android 构建
 

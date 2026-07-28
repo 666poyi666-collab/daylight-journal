@@ -8,11 +8,12 @@
 | 编号 | 严重度 | 状态 | 现象与影响 | 计划/验收 |
 | --- | --- | --- | --- | --- |
 | KR-001 | 高 | 暂缓 | 两台设备同时编辑同一天时按整日 `updatedAt` 后写覆盖，不是 block 级合并 | P2 设计 tombstone、块排序和冲突用例 |
-| KR-004 | 中 | 待处理 | 当前没有持久化离线队列，长时间离线后的自动重试能力有限 | P2 增加队列、退避和恢复测试 |
+| KR-004 | 低 | 暂缓 | 旧 `/journal/sync` 兼容链路没有持久 outbox；云 V2 已有持久 entity/outbox/flight/object-payload，但旧客户端仍只能靠再次进入应用重试 | 旧链路退役前保留；不把它当作 PC-off 能力 |
 | KR-005 | 中 | 暂缓 | GitHub 提供的是 debug 签名 APK，不适合作为正式商店或长期升级包 | 配置 release keystore、版本号和签名验证 |
 | KR-006 | 低 | 待上游 | MCP Inspector 1.0.0 在 Windows Node 24 完成响应后触发 libuv 退出断言 | 保留成功响应证据；CI/兼容 Node 复验并跟踪 Inspector 上游 |
 | KR-007 | 中 | 待上游 | MCP SDK 1.29 间接依赖的 Hono Windows 静态文件适配器有路径穿越公告 | Journal 只使用 Express、不挂载该适配器；持续审计并升级到上游修复版本 |
-| KR-008 | 高 | 待处理 | 跨端共享副本仍运行在个人电脑上，电脑关机期间手机无法同步到其他端 | 选择常驻云环境后设计 JournalStore 部署、密钥、备份和迁移验收 |
+| KR-008 | 高 | 处理中 | 默认共享副本仍运行在个人电脑上；云 V2 Worker/D1/R2 已完成本地实现，但没有 staging revision 与 PC-off 证据 | 完成隔离 staging、迁移回放、真实设备三轮 PC-off 与灰度发布 |
+| KR-009 | 高 | 待处理 | Web E2E 和本地 Worker 合同不能证明 Android Keystore/原生 HTTP、真实 R2/D1、Doze/网络恢复或双设备 root 恢复 | staging + 至少两台真实设备验收；证据与 manifest/revision 同步后才可关闭 |
 
 ## 已修复并回归
 
@@ -42,6 +43,10 @@
 | BUG-022 | 2026-07 | 文档要求手机保存 `.local` 地址，但 Android WebView 无法解析该名称，且前端没有实现 mDNS 服务发现；Redmi 的 AOSP mDNS 解码器还会拒绝局域网广播包，电脑在线时仍无法同步 | Android 增加原生 NSD 桥，并以受限私网 `/24` Journal 健康探测兼容异常网络栈；Redmi 真机已发现正确 LAN 服务，构建/单测/E2E/部署冒烟通过 |
 | BUG-023 | 2026-07 | 手机配对要求手工搬运 32 位以上长期令牌，既易出错又迫使用户暴露持久凭据 | 改为管理员入口生成 6 位一次性码：5 分钟、5 次、单次使用；生产兑换成功且同码重放 410，集成测试覆盖错码、锁定、过期和重放 |
 | BUG-024 | 2026-07 | Android WebView 能连接 LAN `8781`，但带 JSON/Authorization 的请求被 mixed-content/PNA 拦截为 `Failed to fetch` | Android 同步与配对改走受限原生 HTTP：HTTPS 可远端，明文仅允许私网 Journal 固定端口；Redmi 真机发现与配对接口调用通过，PNA 许可仍只向受信本地 origin 返回 |
+| BUG-025 | 2026-07 | 云 V2 曾把 `coverImage` data URL 放进实体 ciphertext；虽然内容加密，但每次 exchange/重试携带整张图，无法独立校验与恢复 | 实体加密前剥离封面；封面使用独立 AES-GCM object、manifest、持久 payload outbox 与 R2 PUT/GET；浏览器回归断言 exchange 不含 data URL、对象 body 不含原文 |
+| BUG-026 | 2026-07 | R2 PUT 已返回完整性 headers，但浏览器跨域脚本因缺少 `Access-Control-Expose-Headers` 读到 `null`，客户端按不可验证回执停止在上传后 | Worker 精确 expose 六个对象完整性/重放 header；E2E 实际复现后通过 PUT→exchange 与 GET→decrypt 链路 |
+| BUG-027 | 2026-07 | outbox 进入 retry 后重启，stage 会为相同内容重新生成 opId/objectKey，破坏稳定重放并留下 R2 孤儿 | stage 识别相同 operation + localFingerprint，保留原 mutation/payload；故障注入覆盖“对象已上传、exchange 503、整页重启、同 opId/objectKey/ciphertext 重放、ACK 后原子清理” |
+| BUG-028 | 2026-07 | Capacitor Android 的 binary `file` request body 在 API 24/25 静默写零字节，导致旧支持版本无法上传封面 | 原生桥改用专用 base64 media type；Worker 严格解码、长度/SHA-256 校验后再写 R2，base64 不进入 exchange、D1 或 R2；本地 Worker 合同已覆盖，真机仍列入 KR-009 |
 
 ## 新 Bug 模板
 

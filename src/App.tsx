@@ -65,11 +65,15 @@ import {
   createJournalDeviceApprovalPackage,
   createJournalRecoveryPackage,
   importJournalRecoveryPackage,
+  initializeJournalSyncRoot,
   journalDeviceApprovalIdentity,
+  journalSyncRootReady,
   syncEncryptedJournal,
 } from './journal/encryptedSync.ts'
 import {
+  isJournalDeviceToken,
   loadJournalSyncCredential,
+  normalizeJournalSyncEndpoint,
   removeLegacyJournalSyncToken,
   saveJournalSyncCredential,
 } from './journal/syncCredentials.ts'
@@ -110,12 +114,13 @@ function safeHttpUrl(value: string): string | null {
   }
 }
 
-type SyncIssue = 'unpaired' | 'auth' | 'server' | 'network'
+type SyncIssue = 'unpaired' | 'key' | 'auth' | 'server' | 'network'
 
 /** 把同步失败归类，供状态栏给出可行动的提示：未配对/令牌被拒引导去设置页。 */
 function classifySyncIssue(error: unknown): SyncIssue {
   const message = error instanceof Error ? error.message : ''
   if (/not paired|device token|device identity/i.test(message)) return 'unpaired'
+  if (/root key|encrypted space/i.test(message)) return 'key'
   const status = /failed: (\d+)/.exec(message)?.[1]
   if (status === '401' || status === '403') return 'auth'
   if (status) return 'server'
@@ -180,6 +185,7 @@ function App() {
   const [journalApiUrl, setJournalApiUrl] = useState(DEFAULT_JOURNAL_API)
   const [journalApiToken, setJournalApiToken] = useState('')
   const [credentialReady, setCredentialReady] = useState(false)
+  const [syncRootReady, setSyncRootReady] = useState(false)
   const [reviewLaunched, setReviewLaunched] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [chatGptUrl, setChatGptUrl] = useState(() => {
@@ -219,17 +225,23 @@ function App() {
         if (!credential) {
           const legacyToken = readStorageValue(JOURNAL_API_TOKEN_KEY)
           const legacyEndpoint = readStorageValue(JOURNAL_API_URL_KEY)
-          if (legacyToken && legacyEndpoint) {
-            credential = await saveJournalSyncCredential(
-              legacyEndpoint.replace(/\/$/, ''),
-              legacyToken,
-            )
-            removeLegacyJournalSyncToken(JOURNAL_API_TOKEN_KEY)
+          if (legacyToken) {
+            try {
+              const normalizedEndpoint = legacyEndpoint
+                ? normalizeJournalSyncEndpoint(legacyEndpoint)
+                : null
+              if (normalizedEndpoint && isJournalDeviceToken(legacyToken)) {
+                credential = await saveJournalSyncCredential(normalizedEndpoint, legacyToken)
+              }
+            } finally {
+              removeLegacyJournalSyncToken(JOURNAL_API_TOKEN_KEY)
+            }
           }
         }
         if (active && credential) {
           setJournalApiUrl(credential.endpoint)
           setJournalApiToken(credential.deviceToken)
+          setSyncRootReady(await journalSyncRootReady(credential.deviceToken))
         }
       } catch {
         // Leave sync unpaired rather than falling back to a plaintext credential.
@@ -492,6 +504,11 @@ function App() {
       setSyncIssue('unpaired')
       return false
     }
+    if (!syncRootReady) {
+      setSyncState('offline')
+      setSyncIssue('key')
+      return false
+    }
     if (syncInFlight.current) return syncInFlight.current
     const run = (async () => {
       setSyncState('syncing')
@@ -509,7 +526,7 @@ function App() {
     } finally {
       syncInFlight.current = null
     }
-  }, [credentialReady, flushLatestEntries, journalApiToken])
+  }, [credentialReady, flushLatestEntries, journalApiToken, syncRootReady])
 
   useEffect(() => {
     if (!credentialReady) return
@@ -904,9 +921,9 @@ function App() {
                         : "尚未保存到本机 · 请检查存储空间"}
                   </small>
                 ) : syncState === "offline" && saveState !== "saving" ? (
-                  syncIssue === "unpaired" || syncIssue === "auth" ? (
+                  syncIssue === "unpaired" || syncIssue === "key" || syncIssue === "auth" ? (
                     <button
-                      className="sync-status offline retryable"
+                      className={`sync-status retryable ${syncIssue === "auth" ? "offline" : "setup"}`}
                       onClick={() => setView("settings")}
                       aria-live="polite"
                       aria-label="前往设置页配对同步服务"
@@ -914,7 +931,9 @@ function App() {
                     >
                       {syncIssue === "auth"
                         ? "配对令牌被拒 · 去设置配对"
-                        : "未配对同步服务 · 去设置配对"}
+                        : syncIssue === "key"
+                          ? "加密空间未就绪 · 去设置恢复"
+                          : "仅保存在本机 · 可配对同步"}
                     </button>
                   ) : (
                     <button
@@ -1049,13 +1068,14 @@ function App() {
                 defaultChatGptUrl={CHATGPT_PROJECT_URL}
                 journalApiUrl={journalApiUrl}
                 syncConfigured={Boolean(journalApiToken)}
+                syncRootReady={syncRootReady}
                 syncState={syncState}
                 onCheckConnection={synchronize}
                 onSyncConfig={async (url, token) => {
-                  const normalizedUrl = safeHttpUrl(url)
+                  const normalizedUrl = normalizeJournalSyncEndpoint(url)
                   const normalizedToken = token.trim()
-                  if (!normalizedUrl || normalizedToken.length < 32) return false
-                  const normalizedServiceUrl = normalizedUrl.replace(/\/$/, '')
+                  if (!normalizedUrl || !isJournalDeviceToken(normalizedToken)) return false
+                  const normalizedServiceUrl = normalizedUrl
                   const urlResult = writeStorageValue(JOURNAL_API_URL_KEY, normalizedServiceUrl)
                   if (!urlResult.ok) {
                     setStorageIssue(urlResult.issue)
@@ -1069,8 +1089,20 @@ function App() {
                   }
                   setJournalApiUrl(normalizedServiceUrl)
                   setJournalApiToken(normalizedToken)
+                  const rootReady = await journalSyncRootReady(normalizedToken)
+                  setSyncRootReady(rootReady)
+                  setSyncState(rootReady ? 'syncing' : 'offline')
+                  setSyncIssue(rootReady ? null : 'key')
                   setCredentialReady(true)
                   return true
+                }}
+                onInitializeSyncRoot={async () => {
+                  if (!journalApiToken) throw new Error('请先绑定本设备 token。')
+                  const created = await initializeJournalSyncRoot(journalApiToken)
+                  setSyncRootReady(true)
+                  setSyncState('syncing')
+                  setSyncIssue(null)
+                  return created
                 }}
                 onCreateRecoveryPackage={async (secret) => {
                   if (!journalApiToken) throw new Error('请先绑定本设备 token。')
@@ -1079,6 +1111,9 @@ function App() {
                 onImportRecoveryPackage={async (secret, value) => {
                   if (!journalApiToken) throw new Error('请先绑定本设备 token。')
                   await importJournalRecoveryPackage(journalApiToken, secret, value)
+                  setSyncRootReady(true)
+                  setSyncState('syncing')
+                  setSyncIssue(null)
                 }}
                 onCreateApprovalIdentity={async () => {
                   if (!journalApiToken) throw new Error('请先绑定本设备 token。')
@@ -1091,6 +1126,9 @@ function App() {
                 onAcceptApprovalPackage={async (value) => {
                   if (!journalApiToken) throw new Error('请先绑定本设备 token。')
                   await acceptJournalDeviceApprovalPackage(journalApiToken, value)
+                  setSyncRootReady(true)
+                  setSyncState('syncing')
+                  setSyncIssue(null)
                 }}
                 onChatGptUrl={(value) => {
                   setChatGptUrl(value)

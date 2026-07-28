@@ -15,6 +15,7 @@ import { format } from 'date-fns'
 import type { JournalEntry } from '../journal/model.ts'
 import type { StorageIssue } from '../journal/storage.ts'
 import type { SyncState } from '../journal/status.ts'
+import { isJournalDeviceToken, normalizeJournalSyncEndpoint } from '../journal/syncCredentials.ts'
 import {
   canDiscoverJournalService,
   discoverJournalService,
@@ -217,10 +218,12 @@ type SettingsPageProps = LockSectionProps & {
   defaultChatGptUrl: string
   journalApiUrl: string
   syncConfigured: boolean
+  syncRootReady: boolean
   syncState: SyncState
   onCheckConnection: () => Promise<boolean>
   onChatGptUrl: (value: string) => void
   onSyncConfig: (url: string, token: string) => Promise<boolean>
+  onInitializeSyncRoot: () => Promise<boolean>
   onCreateRecoveryPackage: (secret: string) => Promise<Record<string, unknown>>
   onImportRecoveryPackage: (secret: string, value: unknown) => Promise<void>
   onCreateApprovalIdentity: () => Promise<Record<string, unknown>>
@@ -241,10 +244,12 @@ export function SettingsPage({
   defaultChatGptUrl,
   journalApiUrl,
   syncConfigured,
+  syncRootReady,
   syncState,
   onCheckConnection,
   onChatGptUrl,
   onSyncConfig,
+  onInitializeSyncRoot,
   onCreateRecoveryPackage,
   onImportRecoveryPackage,
   onCreateApprovalIdentity,
@@ -362,6 +367,15 @@ export function SettingsPage({
     }
   }
 
+  async function initializeSyncRoot() {
+    try {
+      const created = await onInitializeSyncRoot()
+      setKeyMessage(created ? '新的端到端加密空间已初始化。' : '本设备已经持有加密根密钥。')
+    } catch (error) {
+      setKeyMessage(error instanceof Error ? error.message : '加密空间初始化失败。')
+    }
+  }
+
   async function importRecoveryPackage() {
     try {
       await onImportRecoveryPackage(recoverySecret, parsePackage(recoveryPackage, '恢复包'))
@@ -461,8 +475,8 @@ export function SettingsPage({
                   onClick={() => void saveDeviceCredential()}
                   disabled={
                     savingCredential ||
-                    !/^https?:\/\//i.test(serviceUrl) ||
-                    !/^dj1\.[A-Za-z0-9][A-Za-z0-9_-]{2,127}\.[A-Za-z0-9_-]{32,}$/.test(deviceToken)
+                    !normalizeJournalSyncEndpoint(serviceUrl) ||
+                    !isJournalDeviceToken(deviceToken)
                   }
                 >
                   {syncConfigSaved ? <Check /> : <Save />}
@@ -504,53 +518,88 @@ export function SettingsPage({
           <div>
             <div className="settings-title-row">
               <h3>恢复与设备批准</h3>
+              <span className={`connection-pill ${syncRootReady ? 'synced' : ''}`}>
+                <i />
+                {syncRootReady ? '密钥已就绪' : '等待密钥'}
+              </span>
             </div>
+            <p>
+              新空间只在第一台设备显式初始化；已有空间请导入离线恢复包，或由已授权设备批准。
+              初始化不会读取旧空间密文。
+            </p>
             <div className="settings-fields">
-              <input
-                type="password"
-                value={recoverySecret}
-                onChange={(event) => setRecoverySecret(event.target.value)}
-                autoComplete="new-password"
-                placeholder="恢复密钥短语（至少 16 个字符）"
-                aria-label="Journal 恢复密钥短语"
-              />
-              <div className="connection-actions">
-                <button className="connection-check" onClick={() => void exportRecoveryPackage()} disabled={!syncConfigured}>
-                  导出恢复包
-                </button>
-                <button className="connection-check" onClick={() => void importRecoveryPackage()} disabled={!syncConfigured}>
-                  导入恢复包
-                </button>
+              <div className="settings-subsection">
+                <header>
+                  <strong>初始化</strong>
+                  <small>只在全新空间的第一台设备上执行一次</small>
+                </header>
+                <div className="connection-actions">
+                  <button
+                    className="connection-check"
+                    onClick={() => void initializeSyncRoot()}
+                    disabled={!syncConfigured || syncRootReady}
+                  >
+                    初始化新加密空间
+                  </button>
+                </div>
               </div>
-              <textarea
-                value={recoveryPackage}
-                onChange={(event) => setRecoveryPackage(event.target.value)}
-                placeholder="恢复包 JSON"
-                aria-label="Journal 恢复包"
-              />
-              <div className="connection-actions">
-                <button className="connection-check" onClick={() => void createApprovalRequest()} disabled={!syncConfigured}>
-                  生成批准请求
-                </button>
-                <button className="connection-check" onClick={() => void createApprovalPackage()} disabled={!syncConfigured || !approvalRequest.trim()}>
-                  生成批准包
-                </button>
-                <button className="connection-check" onClick={() => void acceptApprovalPackage()} disabled={!syncConfigured || !approvalPackage.trim()}>
-                  导入批准包
-                </button>
+              <div className="settings-subsection">
+                <header>
+                  <strong>离线恢复包</strong>
+                  <small>用密钥短语在设备之间搬运根密钥</small>
+                </header>
+                <input
+                  type="password"
+                  value={recoverySecret}
+                  onChange={(event) => setRecoverySecret(event.target.value)}
+                  autoComplete="new-password"
+                  placeholder="恢复密钥短语（至少 16 个字符）"
+                  aria-label="Journal 恢复密钥短语"
+                />
+                <div className="connection-actions">
+                  <button className="connection-check" onClick={() => void exportRecoveryPackage()} disabled={!syncConfigured || !syncRootReady}>
+                    导出恢复包
+                  </button>
+                  <button className="connection-check" onClick={() => void importRecoveryPackage()} disabled={!syncConfigured}>
+                    导入恢复包
+                  </button>
+                </div>
+                <textarea
+                  value={recoveryPackage}
+                  onChange={(event) => setRecoveryPackage(event.target.value)}
+                  placeholder="恢复包 JSON"
+                  aria-label="Journal 恢复包"
+                />
               </div>
-              <textarea
-                value={approvalRequest}
-                onChange={(event) => setApprovalRequest(event.target.value)}
-                placeholder="设备批准请求 JSON"
-                aria-label="Journal 设备批准请求"
-              />
-              <textarea
-                value={approvalPackage}
-                onChange={(event) => setApprovalPackage(event.target.value)}
-                placeholder="设备批准包 JSON"
-                aria-label="Journal 设备批准包"
-              />
+              <div className="settings-subsection">
+                <header>
+                  <strong>设备批准</strong>
+                  <small>新设备发请求，已授权设备签发批准包</small>
+                </header>
+                <div className="connection-actions">
+                  <button className="connection-check" onClick={() => void createApprovalRequest()} disabled={!syncConfigured || syncRootReady}>
+                    生成批准请求
+                  </button>
+                  <button className="connection-check" onClick={() => void createApprovalPackage()} disabled={!syncConfigured || !syncRootReady || !approvalRequest.trim()}>
+                    生成批准包
+                  </button>
+                  <button className="connection-check" onClick={() => void acceptApprovalPackage()} disabled={!syncConfigured || !approvalPackage.trim()}>
+                    导入批准包
+                  </button>
+                </div>
+                <textarea
+                  value={approvalRequest}
+                  onChange={(event) => setApprovalRequest(event.target.value)}
+                  placeholder="设备批准请求 JSON"
+                  aria-label="Journal 设备批准请求"
+                />
+                <textarea
+                  value={approvalPackage}
+                  onChange={(event) => setApprovalPackage(event.target.value)}
+                  placeholder="设备批准包 JSON"
+                  aria-label="Journal 设备批准包"
+                />
+              </div>
             </div>
             {keyMessage && <small role="status">{keyMessage}</small>}
           </div>
