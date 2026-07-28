@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Journal 客户端生产同步切换到 AES-256-GCM V2：durable outbox、首次拉取、附件密文、显式删除、tombstone 恢复和冲突重排均走 `/sync/v2/*`，不再回退明文 V1。
+- 设置页增加 `dj1` 设备凭据与 `jk1` 根密钥的显式设备批准流程。
+
 ### Fixed
 
 - 将 Journal Tunnel 健康端口从 Windows 保留范围内的 8987 迁移到 8887，并补齐 Secure MCP

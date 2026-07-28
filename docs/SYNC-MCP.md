@@ -1,13 +1,21 @@
 # 同步与 MCP 协议
 
-## 数据与兼容同步
+## 生产加密同步
+
+- `POST /sync/v2/exchange`：唯一生产数据交换入口，传输 AES-GCM 密文 mutation、conflict、change 和 cursor。
+- `PUT/GET /sync/v2/objects/:key`：上传或恢复封面附件密文，并校验 digest、字节数、nonce、AAD hash 和 key version。
+- 客户端没有 `/journal/all`、`/journal/sync` 或 `/sync/v1/*` fallback；V2 不可用时保留本机稿件与 durable outbox。
+- 设置页只有同时保存 `dj1` 设备凭据和 `jk1` 端到端根密钥后，才视为设备已批准并启动同步。
+
+## 本地兼容服务边界
 
 - `GET /journal/all`：为现有 Web/Android 客户端返回完整日期映射。
 - `POST /journal/sync`：串行合并客户端副本；较旧 `updatedAt` 不覆盖新版本，并推进整数 revision。
 - `GET /health`：旧客户端兼容探活。运维探活使用 `/healthz` 和 `/readyz`。
 
-客户端仍是 localStorage 本地优先，服务端 JSON 是跨端副本。跨设备同时编辑同一天仍按
-整日 `updatedAt` 合并，不宣称 block 级无冲突协作。
+旧 `/journal/*` 只属于独立本地兼容服务，不是生产客户端数据链路。客户端仍以
+localStorage 为编辑副本，但跨端 authority revision、conflict 和 tombstone 由 V2 管理。
+当前不宣称 block 级无冲突协作。
 
 ## 版本化业务 API
 

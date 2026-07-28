@@ -150,7 +150,8 @@ function App() {
   })
   const saveTimer = useRef<number | undefined>(undefined)
   const reviewTimer = useRef<number | undefined>(undefined)
-  const syncInFlight = useRef<Promise<boolean> | null>(null)
+  const syncInFlight = useRef<{ epoch: number; promise: Promise<boolean> } | null>(null)
+  const syncConfigEpochRef = useRef(0)
   const revisionRef = useRef(0)
   const syncedRevisionRef = useRef(-1)
   const recoveryRawRef = useRef(initialLoad.raw)
@@ -301,14 +302,18 @@ function App() {
   }, [selectedDate, todayKey])
 
   const synchronize = useCallback(async (): Promise<boolean> => {
-    if (syncInFlight.current) return syncInFlight.current
+    const epoch = syncConfigEpochRef.current
+    const active = syncInFlight.current
+    if (active?.epoch === epoch) return active.promise
+    if (active) await active.promise
+    if (epoch !== syncConfigEpochRef.current) return false
     const run = (async () => {
       setSyncState('syncing')
       try {
         const startedAtRevision = revisionRef.current
         const client = createSyncClient()
         const result = await client.synchronize(entriesRef.current)
-        if (startedAtRevision !== revisionRef.current) return true
+        if (epoch !== syncConfigEpochRef.current || startedAtRevision !== revisionRef.current) return true
         entriesRef.current = result.entries
         setEntries(result.entries)
         const persisted = persistSnapshot(result.entries)
@@ -318,15 +323,15 @@ function App() {
         setSyncState('synced')
         return true
       } catch {
-        setSyncState('offline')
+        if (epoch === syncConfigEpochRef.current) setSyncState('offline')
         return false
       }
     })()
-    syncInFlight.current = run
+    syncInFlight.current = { epoch, promise: run }
     try {
       return await run
     } finally {
-      syncInFlight.current = null
+      if (syncInFlight.current?.promise === run) syncInFlight.current = null
     }
   }, [createSyncClient, persistSnapshot])
 
@@ -892,6 +897,7 @@ function App() {
                   setJournalApiUrl(normalizedServiceUrl)
                   setJournalApiToken(normalizedToken)
                   setJournalRootKey(normalizedRootKey)
+                  syncConfigEpochRef.current += 1
                   setSyncState('syncing')
                   return true
                 }}

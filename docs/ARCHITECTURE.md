@@ -6,14 +6,11 @@
 React/Vite/Capacitor
         │
         ├─ localStorage（本端快速读写）
-        │
-        └─ /journal/all、/journal/sync
-                         │
-                 JournalStore 业务层
-                    │         │
-      data/journals.json      mcp/server.mjs
-                                    │
-ChatGPT → Journal Tunnel → 127.0.0.1:8780/mcp
+        └─ AES-256-GCM durable outbox
+                    │
+          /sync/v2/exchange、/sync/v2/objects/*
+                    │
+            Journal encrypted authority
 
 手机/平板 → mDNS `_poyi-journal._tcp.local` → LAN 8781（认证业务 API，无 MCP）
 ```
@@ -73,11 +70,15 @@ type JournalBlock = {
 ## 同步原则
 
 - 本地优先：网络不可用仍可写
-- 服务端是跨端共享副本，不直接替代本地编辑体验
-- 合并按 `updatedAt` 取较新版本
+- 生产客户端只调用 `/sync/v2/*`；V2 失败进入离线状态，不探测或回退明文 V1 路由
+- 正文、标题、记录片、标签和封面在离开设备前加密；服务端只接收密文、digest、nonce、AAD hash、key version 和附件 manifest
+- 本地编辑先进入持久化密文 outbox，再进行附件上传和 exchange；重试复用原 `opId`、nonce 和 ciphertext
+- 首次拉取在解密、schema 与附件完整性验证完成后才原子推进 cursor
+- 冲突保留 server current 与本地 candidate；较新的本地稿会基于 authority revision 重新排队
+- 整篇删除是显式操作，先持久化 tombstone；同日期重新写作按更高 revision 恢复
 - 服务端同步写入串行执行，并在写入前重新读取最新副本，避免并发请求和慢设备把旧修订写回
 - 只上传有标题或正文的记录
-- 日记可带一张可选封面图；图片进入同步副本，但 MCP/ChatGPT 文本工具只返回 `hasImage`，不把 base64 图片塞进复盘上下文
+- 日记可带一张可选封面图；客户端只上传附件密文，data URL/base64 不进入 exchange 正文
 - 同步失败显示“已保存到本机 · 点击重试”，不能阻塞输入；点击后立即触发一次同步重试
 - 编辑变更立即写入本地 localStorage；远端同步仍采用 500ms 防抖，关闭或切后台不会丢最后一段输入
 - 本地数据和远端响应都经过结构校验；存储不可用、配额不足或数据损坏会进入明确错误状态，不再静默当作空库

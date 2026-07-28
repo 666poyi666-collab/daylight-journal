@@ -188,6 +188,8 @@ function parseSnapshot(raw: string): SyncSnapshot {
   if (!isRecord(value.records) || !Array.isArray(value.outbox) || !isRecord(value.attachments)) {
     throw new Error('invalid_sync_snapshot')
   }
+  const pendingDeletes = value.pendingDeletes === undefined ? [] : value.pendingDeletes
+  if (!Array.isArray(pendingDeletes) || !pendingDeletes.every(isDate)) throw new Error('invalid_sync_snapshot')
   for (const [entityId, record] of Object.entries(value.records)) {
     if (!isDate(entityId) || !isSyncRecord(record)) throw new Error('invalid_sync_snapshot')
   }
@@ -204,7 +206,7 @@ function parseSnapshot(raw: string): SyncSnapshot {
       throw new Error('invalid_sync_snapshot')
     }
   }
-  return JSON.parse(JSON.stringify(value)) as SyncSnapshot
+  return { ...JSON.parse(JSON.stringify(value)) as SyncSnapshot, pendingDeletes: [...pendingDeletes] }
 }
 
 export class BrowserSyncStore implements SyncStore {
@@ -406,8 +408,12 @@ export class JournalV2SyncClient {
   }
 
   async synchronize(localEntries: JournalEntries): Promise<JournalV2SyncResult> {
-    await this.drain(true)
     let state = await this.store.read()
+    const knownEntries = await this.materialize(state)
+    const optimistic = this.mergeDesired(localEntries, knownEntries, state)
+    await this.reconcile(optimistic, state)
+    await this.drain(true)
+    state = await this.store.read()
     const remoteEntries = await this.materialize(state)
     const desired = this.mergeDesired(localEntries, remoteEntries, state)
     await this.reconcile(desired, state)
@@ -422,13 +428,15 @@ export class JournalV2SyncClient {
   /** Queue an explicit whole-entry tombstone before the plaintext view is removed. */
   async queueDelete(entityId: string): Promise<void> {
     if (!isDate(entityId)) throw new Error('invalid_entity_id')
-    const state = await this.store.read()
+    let state = await this.store.read()
     const record = state.records[entityId]
-    if (!record || record.deleted) return
+    if (record?.deleted) return
+    await this.encrypted.markDeleteIntent(entityId)
+    state = await this.store.read()
     const mutation = await encryptMutation(this.root, {
       opId: crypto.randomUUID(),
       entityId,
-      baseRevision: record.revision,
+      baseRevision: state.records[entityId]?.revision ?? 0,
       operation: 'delete',
     }, null)
     await this.encrypted.queue(mutation)
@@ -600,22 +608,27 @@ export class JournalV2SyncClient {
         desired[date] = entry
       }
     }
+    for (const entityId of state.pendingDeletes) delete desired[entityId]
     return desired
   }
 
   private async reconcile(desired: JournalEntries, initialState: SyncSnapshot): Promise<void> {
     let state = initialState
     let currentEntries = await this.materialize(state)
-    const entityIds = new Set([...Object.keys(state.records), ...Object.keys(desired)])
+    const entityIds = new Set([
+      ...Object.keys(state.records),
+      ...Object.keys(desired),
+      ...state.pendingDeletes,
+    ])
     for (const entityId of entityIds) {
       const target = desired[entityId]
       const record = state.records[entityId]
       if (!target) {
-        if (record && !record.deleted) {
+        if (state.pendingDeletes.includes(entityId) && (!record || !record.deleted)) {
           const mutation = await encryptMutation(this.root, {
             opId: crypto.randomUUID(),
             entityId,
-            baseRevision: record.revision,
+            baseRevision: record?.revision ?? 0,
             operation: 'delete',
           }, null)
           await this.encrypted.queue(mutation)

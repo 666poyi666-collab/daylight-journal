@@ -14,15 +14,17 @@ npm install
 npm run dev
 ```
 
-同步与 MCP 服务单独启动：
+本地 MCP/旧兼容服务单独启动：
 
 ```powershell
 npm run mcp
 curl.exe -s http://127.0.0.1:8780/healthz
 ```
 
-`data/journals.json` 是个人运行数据，禁止提交。公开构建默认连接本机
-`http://127.0.0.1:8780`。远端地址和 ChatGPT 项目必须在构建时显式注入：
+`data/journals.json` 是个人运行数据，禁止提交。公开构建默认显示本机
+`http://127.0.0.1:8780`，但生产客户端只使用 V2。同步 authority 地址和 ChatGPT 项目
+可在构建时显式注入；`dj1` 设备凭据与 `jk1` 根密钥只能由用户在设置页批准并保存在本机，
+不能写进 `VITE_*`：
 
 ```powershell
 $env:VITE_JOURNAL_API_URL = 'https://your-sync.example.com'

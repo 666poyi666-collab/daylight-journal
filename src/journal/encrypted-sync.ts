@@ -96,6 +96,7 @@ export type SyncSnapshot = {
   records: Record<string, SyncRecord>
   outbox: EncryptedMutation[]
   attachments: Record<string, AttachmentUpload>
+  pendingDeletes: string[]
 }
 
 export interface SyncStore {
@@ -111,7 +112,7 @@ const decoder = new TextDecoder()
 const PLACEHOLDER_OPERATION_ID = '00000000-0000-4000-8000-000000000000'
 
 export function emptySyncSnapshot(): SyncSnapshot {
-  return { cursor: null, records: {}, outbox: [], attachments: {} }
+  return { cursor: null, records: {}, outbox: [], attachments: {}, pendingDeletes: [] }
 }
 
 function clone<T>(value: T): T {
@@ -384,6 +385,13 @@ export class JournalEncryptedSync {
   ): Promise<void> {
     const state = clone(await this.store.read())
     if (state.outbox.some((item) => item.opId === mutation.opId)) throw new Error('duplicate_op_id')
+    if (
+      mutation.objects.length !== attachments.length ||
+      mutation.objects.some((ref) => {
+        const attachment = attachments.find((item) => item.ref.objectKey === ref.objectKey)
+        return !attachment || stableJson(attachment.ref) !== stableJson(ref)
+      })
+    ) throw new Error('attachment_set_mismatch')
     for (const attachment of attachments) state.attachments[attachment.ref.objectKey] = clone(attachment)
     const existing = state.records[mutation.entityId]
     state.records[mutation.entityId] = {
@@ -408,6 +416,12 @@ export class JournalEncryptedSync {
     const attachment = state.attachments[objectKey]
     if (!attachment) throw new Error('attachment_missing')
     attachment.uploaded = true
+    await this.store.write(state)
+  }
+
+  async markDeleteIntent(entityId: string): Promise<void> {
+    const state = clone(await this.store.read())
+    if (!state.pendingDeletes.includes(entityId)) state.pendingDeletes.push(entityId)
     await this.store.write(state)
   }
 
@@ -505,9 +519,27 @@ export class JournalEncryptedSync {
       }
       acknowledgedIds.add(acknowledgement.opId)
     }
+    const acknowledgedDeletes = new Set(
+      acknowledged.filter((item) => item.operation === 'delete').map((item) => item.entityId),
+    )
+    state.pendingDeletes = state.pendingDeletes.filter((entityId) => !acknowledgedDeletes.has(entityId))
     state.outbox = state.outbox.filter(
       (item) => !acknowledgedIds.has(item.opId) && !completedConflicts.has(item.opId),
     )
+    const retainedObjects = new Set<string>()
+    for (const record of Object.values(state.records)) {
+      for (const object of record.objects) retainedObjects.add(object.objectKey)
+      for (const conflict of record.conflicts) {
+        for (const object of conflict.current?.objects ?? []) retainedObjects.add(object.objectKey)
+        for (const object of conflict.candidate?.objects ?? []) retainedObjects.add(object.objectKey)
+      }
+    }
+    for (const mutation of state.outbox) {
+      for (const object of mutation.objects) retainedObjects.add(object.objectKey)
+    }
+    for (const objectKey of Object.keys(state.attachments)) {
+      if (!retainedObjects.has(objectKey)) delete state.attachments[objectKey]
+    }
     state.cursor = nextCursor
     await this.store.write(state)
   }

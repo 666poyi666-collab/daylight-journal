@@ -36,8 +36,9 @@ $env:VITE_CHATGPT_PROJECT_URL = 'https://chatgpt.com/g/your-project'
 npm run build
 ```
 
-公开构建不会内置个人 Tunnel 或 ChatGPT 项目标识。未配置时，同步服务默认连接
-`http://127.0.0.1:8780`，ChatGPT 入口默认打开首页。
+公开构建不会内置个人 Tunnel、设备凭据、根密钥或 ChatGPT 项目标识。未配置 URL 时仍显示
+`http://127.0.0.1:8780`，但生产客户端只调用 `/sync/v2/*`；必须在设置页保存有效的
+`dj1` 设备凭据和共享 `jk1` 根密钥后才会同步，不会回退 `/journal/*` 或 V1。
 
 Android：
 
@@ -60,7 +61,8 @@ release 签名和版本号。
 npm run mcp
 ```
 
-桌面本地同步接口：`http://127.0.0.1:8780/journal/*`
+`http://127.0.0.1:8780/journal/*` 是旧本地兼容接口，不再是生产客户端数据链路。
+生产同步 authority 必须提供 `/sync/v2/exchange` 和 `/sync/v2/objects/*`。
 
 手机/平板同步：通过设置页保存 mDNS 地址（`http://<host>.local:8781`）和独立配对令牌；
 LAN listener 不提供 `/mcp`，不依赖 ADB 或固定 IP。
