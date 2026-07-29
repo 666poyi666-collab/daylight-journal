@@ -8,6 +8,10 @@ import {
   createJournalApiRouter,
   loadOrCreateApiToken,
 } from '../journal-api.mjs'
+import {
+  createPeerAttachmentRouter,
+  loadOrCreatePeerAttachmentToken,
+} from '../peer-attachment-api.mjs'
 import { JournalStore } from '../journal-store.mjs'
 import { AuditLogger } from './audit.mjs'
 import { JournalHealth } from './health.mjs'
@@ -22,9 +26,9 @@ export function createMcpServer(store, audit, health, version) {
   return server
 }
 
-function configureHttpApp(app) {
+function configureHttpApp(app, jsonLimit = '4mb') {
   app.disable('x-powered-by')
-  app.use(express.json({ limit: '4mb' }))
+  app.use(express.json({ limit: jsonLimit }))
   app.use(cors({ origin: true, exposedHeaders: ['Mcp-Session-Id'] }))
 }
 
@@ -63,9 +67,17 @@ function registerBusinessRoutes(app, store, apiToken) {
 
 export function createJournalSyncApp(store, apiToken) {
   const app = express()
-  configureHttpApp(app)
-  app.get('/healthz', (_req, res) => res.json({ ok: true, service: 'Journal Sync API' }))
-  registerBusinessRoutes(app, store, apiToken)
+  configureHttpApp(app, '12mb')
+  app.get('/healthz', (_req, res) => res.json({
+    ok: true,
+    service: 'Journal Peer Attachment API',
+    textSync: false,
+    peerAttachments: true,
+  }))
+  app.use(
+    '/v1/peer-attachments',
+    createPeerAttachmentRouter(store.dataDir, apiToken),
+  )
   return app
 }
 
@@ -73,6 +85,10 @@ export async function createJournalApp(settings = getSettings()) {
   const store = new JournalStore(settings.dataDir)
   await store.initialize()
   const apiToken = await loadOrCreateApiToken(settings.dataDir)
+  const peerAttachmentToken = await loadOrCreatePeerAttachmentToken(settings.dataDir)
+  if (peerAttachmentToken === apiToken) {
+    throw new Error('Peer attachment capability must be independent from JOURNAL_API_TOKEN')
+  }
   const audit = new AuditLogger(settings.auditFile)
   const health = new JournalHealth(settings.version)
   const app = express()
@@ -119,7 +135,7 @@ export async function createJournalApp(settings = getSettings()) {
   app.get('/mcp', (_req, res) => res.status(405).json({ error: 'Use POST for MCP requests' }))
   app.delete('/mcp', (_req, res) => res.status(405).json({ error: 'Stateless MCP sessions cannot be deleted' }))
 
-  return { app, store, audit, health, apiToken, settings }
+  return { app, store, audit, health, apiToken, peerAttachmentToken, settings }
 }
 
 export async function startJournalServer(settings = getSettings()) {
@@ -132,7 +148,7 @@ export async function startJournalServer(settings = getSettings()) {
   let bonjour = null
   let advertisement = null
   if (settings.syncHost) {
-    const syncApp = createJournalSyncApp(runtime.store, runtime.apiToken)
+    const syncApp = createJournalSyncApp(runtime.store, runtime.peerAttachmentToken)
     syncServer = await new Promise((resolve, reject) => {
       const listener = syncApp.listen(settings.syncPort, settings.syncHost, () => resolve(listener))
       listener.once('error', reject)
@@ -146,7 +162,7 @@ export async function startJournalServer(settings = getSettings()) {
       type: 'poyi-journal',
       protocol: 'tcp',
       port: syncPort,
-      txt: { serviceId: service.serviceId, apiVersion: '1' },
+      txt: { serviceId: service.serviceId, apiVersion: '1', peerAttachments: 'v1' },
     })
   }
   runtime.health.ready = true

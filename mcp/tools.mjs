@@ -31,6 +31,8 @@ function entryResourceResult(value, requestId) {
     contentLength,
   }
   const payload = { ok: true, requestId, data }
+  const { coverImage: _localOnlyAttachment, ...entryWithoutAttachment } = value.entry
+  const resourceValue = { ...value, entry: entryWithoutAttachment }
   return {
     content: [
       { type: 'text', text: JSON.stringify(payload) },
@@ -39,7 +41,7 @@ function entryResourceResult(value, requestId) {
         resource: {
           uri: data.entry.resourceUri,
           mimeType: 'application/json',
-          text: JSON.stringify(value),
+          text: JSON.stringify(resourceValue),
         },
       },
     ],
@@ -55,7 +57,6 @@ function metadataOnly(value) {
       title: entry.title,
       mood: entry.mood,
       tags: entry.tags,
-      hasImage: Boolean(entry.coverImage),
       updatedAt: entry.updatedAt,
       revision,
       resourceUri: `journal://entries/${entry.date}`,

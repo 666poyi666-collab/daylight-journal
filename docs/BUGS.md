@@ -34,6 +34,7 @@
 | BUG-015 | 2026-07 | 升级 MCP 时依赖服务 Tunnel 被 Windows 停止后没有恢复 | 安装脚本记忆升级前状态，在 MCP ready 后恢复并等待 Tunnel ready；实际升级回归通过 |
 | BUG-016 | 2026-07 | 服务验证发现敏感日志时仍可能以退出码 0 结束 | 匿名认证、LAN 隔离、单监听进程和敏感值扫描均改为硬断言；管理员上下文验证退出码 0 |
 | BUG-017 | 2026-07 | 浏览器默认 `fetch` 作为客户端成员调用时触发 `Illegal invocation`，V2 outbox 无法发出 | 默认 transport 改为保持浏览器全局调用语义；入口 E2E 捕获真实非空 mutation exchange |
+| BUG-018 | 2026-07 | 云附件对象链路与 LAN 全量正文兼容接口不符合“附件只在电脑与手机直连时同步”的边界 | 云 exchange 固定 `objects=[]`；新增私有地址白名单、独立附件 AAD/密文 pending/tombstone，并把 LAN 8781 收窄为附件密文接口；Node 集成测试覆盖公网拒绝、加密落盘、更新、删除、重启、离线保留与分歧拒绝 |
 
 ## 新 Bug 模板
 

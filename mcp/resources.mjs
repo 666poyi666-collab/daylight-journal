@@ -21,8 +21,14 @@ export function registerJournalResources(server, store, audit, health) {
           durationMs: Date.now() - started,
           outcome: 'success',
         })
+        const { coverImage: _localOnlyAttachment, ...entryWithoutAttachment } = value.entry
+        const resourceValue = { ...value, entry: entryWithoutAttachment }
         return {
-          contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(value) }],
+          contents: [{
+            uri: uri.href,
+            mimeType: 'application/json',
+            text: JSON.stringify(resourceValue),
+          }],
         }
       } catch (error) {
         const safe = safeError(error)

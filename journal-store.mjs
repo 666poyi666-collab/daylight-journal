@@ -91,7 +91,6 @@ function summarize(entry, revision) {
     title: entry.title,
     mood: entry.mood,
     tags: entry.tags,
-    hasImage: Boolean(entry.coverImage),
     summary: entry.content.slice(0, 220),
     updatedAt: entry.updatedAt,
     revision,

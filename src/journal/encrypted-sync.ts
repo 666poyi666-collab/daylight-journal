@@ -247,16 +247,20 @@ export async function decryptMutation(root: RootKeyBundle, mutation: EncryptedMu
   if (await sha256(encrypted) !== mutation.ciphertextSha256) throw new Error('ciphertext_hash_mismatch')
   const aad = stableJson(mutationAad(mutation))
   if (mutation.aadHash !== await sha256(aad)) throw new Error('aad_mismatch')
-  const clear = await crypto.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv: arrayBuffer(fromBase64Url(mutation.nonce)),
-      additionalData: arrayBuffer(encoder.encode(aad)),
-    },
-    await importRoot(root),
-    arrayBuffer(encrypted),
-  )
-  return JSON.parse(decoder.decode(clear))
+  try {
+    const clear = await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: arrayBuffer(fromBase64Url(mutation.nonce)),
+        additionalData: arrayBuffer(encoder.encode(aad)),
+      },
+      await importRoot(root),
+      arrayBuffer(encrypted),
+    )
+    return JSON.parse(decoder.decode(clear))
+  } catch {
+    throw new Error('undecryptable_payload')
+  }
 }
 
 export async function encryptAttachment(

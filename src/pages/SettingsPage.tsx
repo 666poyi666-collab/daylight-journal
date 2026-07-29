@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { Archive, Bot, Check, Download, FileText, KeyRound, Save } from 'lucide-react'
+import {
+  Archive,
+  Bot,
+  Check,
+  Download,
+  FileText,
+  KeyRound,
+  Network,
+  Save,
+} from 'lucide-react'
 import { format } from 'date-fns'
 import type { JournalEntry } from '../journal/model.ts'
+import { normalizePeerAttachmentUrl } from '../journal/peer-attachment-sync.ts'
 import type { StorageIssue } from '../journal/storage.ts'
 import type { SyncState } from '../journal/status.ts'
 
@@ -12,9 +22,14 @@ type SettingsPageProps = {
   journalApiToken: string
   journalRootKey: string
   syncState: SyncState
+  peerAttachmentUrl: string
+  peerAttachmentToken: string
+  peerAttachmentState: 'setup' | 'syncing' | 'synced' | 'offline'
   onCheckConnection: () => Promise<boolean>
+  onCheckPeerConnection: () => Promise<boolean>
   onChatGptUrl: (value: string) => void
   onSyncConfig: (url: string, token: string, rootKey: string) => boolean
+  onPeerAttachmentConfig: (url: string, token: string) => boolean
   entries: JournalEntry[]
   storageIssue: StorageIssue | null
 }
@@ -26,9 +41,14 @@ export function SettingsPage({
   journalApiToken,
   journalRootKey,
   syncState,
+  peerAttachmentUrl,
+  peerAttachmentToken,
+  peerAttachmentState,
   onCheckConnection,
+  onCheckPeerConnection,
   onChatGptUrl,
   onSyncConfig,
+  onPeerAttachmentConfig,
   entries,
   storageIssue,
 }: SettingsPageProps) {
@@ -39,6 +59,10 @@ export function SettingsPage({
   const [serviceToken, setServiceToken] = useState(journalApiToken)
   const [serviceRootKey, setServiceRootKey] = useState(journalRootKey)
   const [syncConfigSaved, setSyncConfigSaved] = useState(false)
+  const [peerUrl, setPeerUrl] = useState(peerAttachmentUrl)
+  const [peerToken, setPeerToken] = useState(peerAttachmentToken)
+  const [peerConfigSaved, setPeerConfigSaved] = useState(false)
+  const [peerChecking, setPeerChecking] = useState(false)
   const exportTimer = useRef<number | undefined>(undefined)
   const totalWords = entries.reduce(
     (sum, entry) => sum + entry.content.replace(/\s/g, '').length,
@@ -82,6 +106,17 @@ export function SettingsPage({
     const saved = onSyncConfig(serviceUrl, serviceToken, serviceRootKey)
     setSyncConfigSaved(saved)
     if (saved) setCheckedAt(null)
+  }
+
+  function savePeerConfig() {
+    const saved = onPeerAttachmentConfig(peerUrl, peerToken)
+    setPeerConfigSaved(saved)
+  }
+
+  async function checkPeerConnection() {
+    setPeerChecking(true)
+    await onCheckPeerConnection()
+    setPeerChecking(false)
   }
 
   return (
@@ -176,6 +211,77 @@ export function SettingsPage({
               />
             </div>
             <small>新设备首次恢复前必须安全传入同一把 jk1 密钥；密钥只保存在本机，不发送到服务端。</small>
+          </div>
+        </section>
+        <section>
+          <div className="settings-icon">
+            <Network />
+          </div>
+          <div>
+            <div className="settings-title-row">
+              <h3>电脑与手机直连附件</h3>
+              <div className="connection-actions">
+                <span className={`connection-pill ${peerAttachmentState}`}>
+                  <i />
+                  {peerAttachmentState === 'synced'
+                    ? '直连可用'
+                    : peerAttachmentState === 'syncing'
+                      ? '正在直连'
+                      : peerAttachmentState === 'offline'
+                        ? '未连接到电脑'
+                        : '尚未配对'}
+                </span>
+                <button
+                  className="connection-check"
+                  onClick={savePeerConfig}
+                  disabled={
+                    !normalizePeerAttachmentUrl(peerUrl) ||
+                    !/^[A-Za-z0-9_-]{32,}$/.test(peerToken.trim())
+                  }
+                >
+                  {peerConfigSaved ? <Check /> : <Save />}
+                  {peerConfigSaved ? '已保存配对' : '保存配对'}
+                </button>
+              </div>
+            </div>
+            <p>
+              图片附件只在电脑与手机处于同一局域网或直连热点时端到端加密传输，
+              不进入 Journal 云端、D1、R2 或 MCP。
+            </p>
+            <div className="settings-fields">
+              <input
+                type="url"
+                value={peerUrl}
+                onChange={(event) => {
+                  setPeerUrl(event.target.value)
+                  setPeerConfigSaved(false)
+                }}
+                placeholder="http://192.168.1.10:8781"
+                aria-label="电脑直连附件服务地址"
+              />
+              <input
+                type="password"
+                value={peerToken}
+                onChange={(event) => {
+                  setPeerToken(event.target.value)
+                  setPeerConfigSaved(false)
+                }}
+                autoComplete="off"
+                placeholder="电脑本地配对令牌"
+                aria-label="电脑直连附件配对令牌"
+              />
+            </div>
+            <button
+              className="secondary-button"
+              onClick={() => void checkPeerConnection()}
+              disabled={peerChecking || peerAttachmentState === 'setup'}
+            >
+              {peerChecking ? '检测中…' : '检测直连附件'}
+            </button>
+            <small>
+              仅接受 localhost、.local 和私有网段地址；关闭电脑或离开直连网络后，
+              正文仍可走云同步，附件会留在本机等待下次直连。
+            </small>
           </div>
         </section>
         <section>

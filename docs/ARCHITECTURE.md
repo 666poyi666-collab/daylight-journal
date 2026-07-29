@@ -6,13 +6,19 @@
 React/Vite/Capacitor
         │
         ├─ localStorage（本端快速读写）
-        └─ AES-256-GCM durable outbox
+        ├─ 正文 AES-256-GCM durable outbox
+        │           │
+        │   /sync/v2/exchange（objects=[]）
+        │           │
+        │   Journal encrypted text authority
+        │
+        └─ 附件 AES-256-GCM peer pending
                     │
-          /sync/v2/exchange、/sync/v2/objects/*
+            私有网段 8781（电脑在线时）
                     │
-            Journal encrypted authority
+            opaque peer attachment store
 
-手机/平板 → mDNS `_poyi-journal._tcp.local` → LAN 8781（认证业务 API，无 MCP）
+手机/平板 → mDNS `_poyi-journal._tcp.local` → LAN 8781（仅附件密文，无正文/MCP）
 ```
 
 ## 代码职责
@@ -21,6 +27,7 @@ React/Vite/Capacitor
 - `src/pages/`：编辑、日历、历史和设置页面；页面只通过显式 props 读写应用状态
 - `src/journal/model.ts`：日记类型、运行时数据校验、时间戳合并和不可变 patch
 - `src/journal/storage.ts`：localStorage 安全适配、损坏数据识别、恢复副本和持久化结果分类
+- `src/journal/peer-attachment-sync.ts`：私有地址校验、附件独立 AAD、密文 pending、tombstone 与直连 materialization
 - `src/journal/image.ts`、`moods.ts`、`status.ts`：图片压缩、心情选项和保存/同步状态协议
 - `src/journal/review.ts`：生成只读、深度且包含长期模式对照的 ChatGPT 复盘提示词
 - `src/hooks/useTodayKey.ts`、`src/hooks/useMediaQuery.ts`：跨午夜日期刷新与响应式无障碍状态
@@ -28,6 +35,7 @@ React/Vite/Capacitor
 - `src/index.css`：全局基础与兼容 token；`src/editorial-ui.css`：当前唯一组件样式入口，负责 Editorial Paper 视觉、三栏独立滚动和多端布局；旧样式文件仅保留为历史参考，不进入运行时级联
 - `journal-store.mjs`：Journal 数据、整数 revision、原子写入和持久化幂等重放
 - `journal-api.mjs`：带随机 Bearer 令牌的版本化 `/v1` API
+- `peer-attachment-store.mjs`、`peer-attachment-api.mjs`：8781 专用的密文附件 authority 与严格 V1 合同
 - `mcp/`：独立 Streamable HTTP MCP、Resource、脱敏审计、健康指标、Windows 服务和 Tunnel
 - `mcp-server.mjs`：指向独立 MCP 的兼容启动入口
 - `public/`：PWA manifest、service worker 和静态图标
@@ -71,14 +79,15 @@ type JournalBlock = {
 
 - 本地优先：网络不可用仍可写
 - 生产客户端只调用 `/sync/v2/*`；V2 失败进入离线状态，不探测或回退明文 V1 路由
-- 正文、标题、记录片、标签和封面在离开设备前加密；服务端只接收密文、digest、nonce、AAD hash、key version 和附件 manifest
-- 本地编辑先进入持久化密文 outbox，再进行附件上传和 exchange；重试复用原 `opId`、nonce 和 ciphertext
-- 首次拉取在解密、schema 与附件完整性验证完成后才原子推进 cursor
+- 正文、标题、记录片和标签在离开设备前加密；云 exchange 的附件集合固定为空
+- 封面只进入独立的直连加密 envelope；公网地址和云 Tunnel 在发请求前即被拒绝
+- 本地编辑分别进入正文 durable outbox 与附件 peer pending；直连重试复用同一密文 envelope
+- 首次正文拉取在解密与 schema 验证后推进 cursor；附件只在解密、digest 与 AAD 验证后写入本地
 - 冲突保留 server current 与本地 candidate；较新的本地稿会基于 authority revision 重新排队
 - 整篇删除是显式操作，先持久化 tombstone；同日期重新写作按更高 revision 恢复
 - 服务端同步写入串行执行，并在写入前重新读取最新副本，避免并发请求和慢设备把旧修订写回
 - 只上传有标题或正文的记录
-- 日记可带一张可选封面图；客户端只上传附件密文，data URL/base64 不进入 exchange 正文
+- 日记可带一张可选封面图；附件密文只发往同机或私有网段 8781，data URL/base64 不进入云 exchange、D1、R2 或 MCP
 - 同步失败显示“已保存到本机 · 点击重试”，不能阻塞输入；点击后立即触发一次同步重试
 - 编辑变更立即写入本地 localStorage；远端同步仍采用 500ms 防抖，关闭或切后台不会丢最后一段输入
 - 本地数据和远端响应都经过结构校验；存储不可用、配额不足或数据损坏会进入明确错误状态，不再静默当作空库
@@ -89,8 +98,9 @@ type JournalBlock = {
 ## 独立 MCP 边界
 
 - `PoyiJournalMcp` 仅监听 `127.0.0.1:8780`，不注册其他项目工具，也不读取其他数据库。
-- 同一业务进程在 Private/LocalSubnet 的 8781 提供带 Bearer 的 LAN API，并通过 mDNS
-  发布稳定 serviceId；LAN listener 不注册 `/mcp`。
+- 同一业务进程可在 Private/LocalSubnet 的 8781 提供带独立 Bearer capability 的附件密文 API，
+  并通过 mDNS 发布稳定 serviceId；LAN listener 不注册正文 API、兼容 `/journal/*` 或 `/mcp`。
+- 8781 capability 单独生成并持久化，禁止与 8780 Journal API token 复用；MCP Resource 会剥离 `coverImage`，附件内容和存在性元数据均不进入 MCP。
 - `/v1/*` 使用仓库外随机 Bearer token；`/mcp` 只允许通过回环地址或独立 Secure MCP Tunnel 到达。
 - 普通工具只返回状态、元数据、短摘要和 Resource URI；完整正文使用 `journal://entries/{date}`。
 - 写操作由 `JournalStore` 执行，MCP 层只做 schema、错误映射和脱敏审计。

@@ -13,6 +13,11 @@ test('AES-GCM binds Journal mutations to immutable AAD', async () => {
   const mutation = await encryptMutation(root, { opId: crypto.randomUUID(), entityId: '2026-07-28', baseRevision: 0, operation: 'upsert' }, { title: 'private', blocks: ['private'] })
   assert.deepEqual(await decryptMutation(root, mutation), { title: 'private', blocks: ['private'] })
   await assert.rejects(() => decryptMutation(root, { ...mutation, entityId: '2026-07-29' }), /aad_mismatch/)
+  const wrongRoot = await initializeRootKey()
+  await assert.rejects(
+    () => decryptMutation(wrongRoot, mutation),
+    /undecryptable_payload/,
+  )
 })
 
 test('encrypted attachments reject tampering and retain resumable upload state', async () => {
@@ -95,4 +100,54 @@ test('terminal server conflicts retain the queued candidate and reject forged AC
   assert.equal(state.outbox.length, 0)
   assert.equal(state.records[local.entityId].conflicts.length, 1)
   assert.deepEqual(state.records[local.entityId].conflicts[0].candidate, local)
+})
+
+test('a crash while committing an ACK retains the durable mutation for exact retry', async () => {
+  class CrashOnceStore extends MemoryStore {
+    crashOnNextWrite = false
+
+    override async write(value: SyncSnapshot) {
+      if (this.crashOnNextWrite) {
+        this.crashOnNextWrite = false
+        throw new Error('simulated_commit_crash')
+      }
+      await super.write(value)
+    }
+  }
+
+  const root = await initializeRootKey()
+  const store = new CrashOnceStore()
+  const sync = new JournalEncryptedSync(store)
+  const mutation = await encryptMutation(root, {
+    opId: crypto.randomUUID(),
+    entityId: '2026-07-29',
+    baseRevision: 0,
+    operation: 'upsert',
+  }, { value: 'durable-before-ack' })
+  await sync.queue(mutation)
+  const acknowledgement = [{
+    outcome: 'acknowledged' as const,
+    opId: mutation.opId,
+    entityType: 'journal_entry' as const,
+    entityId: mutation.entityId,
+    operation: mutation.operation,
+    revision: 1,
+  }]
+  const change = [{
+    ...mutation,
+    revision: 1,
+    changedAt: '2026-07-29T00:00:00.000Z',
+    originDeviceId: 'same-device',
+    operationId: mutation.opId,
+  }]
+  store.crashOnNextWrite = true
+  await assert.rejects(
+    () => sync.applyExchange(acknowledgement, [], change, 'c1'),
+    /simulated_commit_crash/,
+  )
+  assert.equal(store.value.outbox[0].opId, mutation.opId)
+  assert.equal(store.value.cursor, null)
+  await sync.applyExchange(acknowledgement, [], change, 'c1')
+  assert.equal(store.value.outbox.length, 0)
+  assert.equal(store.value.cursor, 'c1')
 })

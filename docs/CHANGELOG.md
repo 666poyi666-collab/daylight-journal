@@ -7,11 +7,16 @@
 
 ### Changed
 
-- Journal 客户端生产同步切换到 AES-256-GCM V2：durable outbox、首次拉取、附件密文、显式删除、tombstone 恢复和冲突重排均走 `/sync/v2/*`，不再回退明文 V1。
+- Journal 客户端正文同步切换到 AES-256-GCM V2：durable outbox、首次拉取、显式删除、tombstone 恢复和冲突重排均走 `/sync/v2/exchange`，不再回退明文 V1。
+- 封面附件退出云端对象链路，改为电脑与手机同网/直连时的独立 AES-GCM V1 通道；公网 URL 在请求前被拒绝，云 mutation 固定 `objects=[]`。
+- LAN 8781 收窄为认证后的附件密文 GET/PUT，不再复制 8780 的正文业务 API、兼容 `/journal/*` 或 MCP。
 - 设置页增加 `dj1` 设备凭据与 `jk1` 根密钥的显式设备批准流程。
 
 ### Fixed
 
+- 附件直连增加持久化密文 pending、幂等重放、tombstone、相同时间戳分歧与 revision 回退拒绝；附件 materialize 成功后才提交本地观察状态。
+- 8781 附件服务改用独立持久化 capability；主 API token 无法访问附件，MCP 工具和 Resource 不再序列化附件或附件存在性。
+- 补齐 ACK 提交崩溃重试、重复附件提交、错误根密钥、tombstone 与断线重连回归。
 - 修复浏览器默认 `fetch` 被当作同步客户端成员调用时的 `Illegal invocation`，使真实 App 保存与附件 outbox 能发出 V2 mutation exchange。
 - V2 首次拉取在当前附件缺失或 manifest 不匹配时不再推进 cursor，并串行化显式删除与在途同步，避免本地原子快照被并发覆盖。
 - 将 Journal Tunnel 健康端口从 Windows 保留范围内的 8987 迁移到 8887，并补齐 Secure MCP

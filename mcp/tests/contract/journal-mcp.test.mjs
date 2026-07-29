@@ -81,6 +81,14 @@ test('Journal MCP exposes namespaced tools, Resources, writes, and content-safe 
     assert.equal(replay.result.structuredContent.data.replayed, true)
     assert.doesNotMatch(JSON.stringify(replay), new RegExp(marker))
 
+    const attachmentMarker = 'data:image/png;base64,MCP_ATTACHMENT_MUST_NOT_LEAK'
+    const current = await runtime.store.getEntry('2026-07-26')
+    await runtime.store.mergeIncoming([{
+      ...current.entry,
+      coverImage: attachmentMarker,
+      updatedAt: new Date(Date.now() + 60_000).toISOString(),
+    }])
+
     const metadata = await rpc(baseUrl, 5, 'tools/call', {
       name: 'journal_get_entry', arguments: { date: '2026-07-26' },
     })
@@ -98,9 +106,12 @@ test('Journal MCP exposes namespaced tools, Resources, writes, and content-safe 
     assert.doesNotMatch(metadata.result.content[0].text, new RegExp(marker))
     assert.doesNotMatch(JSON.stringify(metadata.result.structuredContent), new RegExp(marker))
     assert.match(metadata.result.content[1].resource.text, new RegExp(marker))
+    assert.doesNotMatch(metadata.result.content[1].resource.text, /MCP_ATTACHMENT_MUST_NOT_LEAK/)
+    assert.equal(metadata.result.structuredContent.data.entry.hasImage, undefined)
 
     const resource = await rpc(baseUrl, 6, 'resources/read', { uri: 'journal://entries/2026-07-26' })
     assert.match(resource.result.contents[0].text, new RegExp(marker))
+    assert.doesNotMatch(resource.result.contents[0].text, /MCP_ATTACHMENT_MUST_NOT_LEAK/)
     const audit = await fs.readFile(auditFile, 'utf8')
     assert.doesNotMatch(audit, new RegExp(marker))
     assert.doesNotMatch(audit, /MCP contract/)

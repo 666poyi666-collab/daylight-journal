@@ -19,7 +19,7 @@ test('Journal v1 API authenticates, reports capabilities, and maps conflicts', a
   })
   const address = listener.address()
   const baseUrl = `http://127.0.0.1:${address.port}`
-  const syncApp = createJournalSyncApp(runtime.store, runtime.apiToken)
+  const syncApp = createJournalSyncApp(runtime.store, runtime.peerAttachmentToken)
   const syncListener = await new Promise((resolve) => {
     const value = syncApp.listen(0, '127.0.0.1', () => resolve(value))
   })
@@ -45,8 +45,12 @@ test('Journal v1 API authenticates, reports capabilities, and maps conflicts', a
     assert.equal(authorizationServer.issuer, baseUrl)
     assert.equal(authorizationServer.token_endpoint, `${baseUrl}/oauth/token`)
     assert.deepEqual(authorizationServer.code_challenge_methods_supported, ['S256'])
-    assert.equal((await fetch(`${syncBaseUrl}/journal/all`)).status, 401)
-    assert.equal((await fetch(`${syncBaseUrl}/journal/all`, { headers })).status, 200)
+    assert.equal((await fetch(`${syncBaseUrl}/journal/all`)).status, 404)
+    assert.equal((await fetch(`${syncBaseUrl}/journal/all`, { headers })).status, 404)
+    assert.equal((await fetch(`${syncBaseUrl}/v1/status`, { headers })).status, 404)
+    assert.equal((await fetch(`${syncBaseUrl}/v1/peer-attachments`)).status, 401)
+    assert.notEqual(runtime.peerAttachmentToken, runtime.apiToken)
+    assert.equal((await fetch(`${syncBaseUrl}/v1/peer-attachments`, { headers })).status, 401)
     assert.equal((await fetch(`${syncBaseUrl}/mcp`)).status, 404)
     const health = await fetch(`${baseUrl}/v1/health`, { headers }).then((response) => response.json())
     assert.equal(health.service, 'journal-api')

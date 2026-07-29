@@ -60,12 +60,23 @@ import {
   JournalV2SyncClient,
   deviceIdFromToken,
 } from './journal/v2-sync.ts'
+import {
+  BrowserPeerAttachmentStore,
+  JournalPeerAttachmentClient,
+  PEER_ATTACHMENT_TOKEN_STORAGE_KEY,
+  PEER_ATTACHMENT_URL_STORAGE_KEY,
+  normalizePeerAttachmentUrl,
+} from './journal/peer-attachment-sync.ts'
 import './editorial-ui.css'
 
 type View = 'today' | 'calendar' | 'history' | 'settings'
 
 const JOURNAL_API_URL_KEY = 'daylight-journal-api'
 const JOURNAL_API_TOKEN_KEY = 'daylight-journal-api-token'
+const DEFAULT_PEER_ATTACHMENT_URL =
+  import.meta.env.VITE_JOURNAL_PEER_URL ||
+  readStorageValue(PEER_ATTACHMENT_URL_STORAGE_KEY) ||
+  ''
 const DEFAULT_JOURNAL_API =
   import.meta.env.VITE_JOURNAL_API_URL ||
   readStorageValue(JOURNAL_API_URL_KEY) ||
@@ -83,6 +94,17 @@ function safeHttpUrl(value: string): string | null {
   } catch {
     return null
   }
+}
+
+function attachmentViewChanged(
+  previous: JournalEntries,
+  next: JournalEntries,
+): boolean {
+  const dates = new Set([...Object.keys(previous), ...Object.keys(next)])
+  for (const date of dates) {
+    if (previous[date]?.coverImage !== next[date]?.coverImage) return true
+  }
+  return false
 }
 
 const navItems = [
@@ -134,6 +156,15 @@ function App() {
   const [journalRootKey, setJournalRootKey] = useState<RootKeyBundle | null>(
     () => parseRootKey(readStorageValue(JOURNAL_ROOT_KEY_STORAGE_KEY) || ''),
   )
+  const [peerAttachmentUrl, setPeerAttachmentUrl] = useState(DEFAULT_PEER_ATTACHMENT_URL)
+  const [peerAttachmentToken, setPeerAttachmentToken] = useState(
+    () => readStorageValue(PEER_ATTACHMENT_TOKEN_STORAGE_KEY) || '',
+  )
+  const [peerAttachmentState, setPeerAttachmentState] = useState<
+    'setup' | 'syncing' | 'synced' | 'offline'
+  >(
+    () => peerAttachmentUrl && peerAttachmentToken ? 'syncing' : 'setup',
+  )
   const [reviewLaunched, setReviewLaunched] = useState(false)
   const [reviewError, setReviewError] = useState('')
   const [chatGptUrl, setChatGptUrl] = useState(() => {
@@ -153,6 +184,9 @@ function App() {
   const syncInFlight = useRef<{ epoch: number; promise: Promise<boolean> } | null>(null)
   const syncMutationInFlight = useRef<Promise<void> | null>(null)
   const syncConfigEpochRef = useRef(0)
+  const peerSyncInFlight = useRef<{ epoch: number; promise: Promise<boolean> } | null>(null)
+  const peerMutationInFlight = useRef<Promise<void> | null>(null)
+  const peerConfigEpochRef = useRef(0)
   const revisionRef = useRef(0)
   const syncedRevisionRef = useRef(-1)
   const recoveryRawRef = useRef(initialLoad.raw)
@@ -297,6 +331,23 @@ function App() {
     })
   }, [journalApiToken, journalApiUrl, journalRootKey])
 
+  const createPeerAttachmentClient = useCallback(() => {
+    const storage = getBrowserStorage()
+    const normalizedUrl = normalizePeerAttachmentUrl(peerAttachmentUrl)
+    if (
+      !storage ||
+      !normalizedUrl ||
+      !journalRootKey ||
+      peerAttachmentToken.length < 32
+    ) throw new Error('peer_attachment_sync_not_configured')
+    return new JournalPeerAttachmentClient(
+      normalizedUrl,
+      peerAttachmentToken,
+      journalRootKey,
+      new BrowserPeerAttachmentStore(storage, normalizedUrl),
+    )
+  }, [journalRootKey, peerAttachmentToken, peerAttachmentUrl])
+
   useEffect(() => {
     if (selectedDate === previousTodayRef.current) setSelectedDate(todayKey)
     previousTodayRef.current = todayKey
@@ -355,6 +406,92 @@ function App() {
     return true
   }, [synchronize])
 
+  const synchronizePeerAttachments = useCallback(async (): Promise<boolean> => {
+    const pendingMutation = peerMutationInFlight.current
+    if (pendingMutation) {
+      try {
+        await pendingMutation
+      } catch {
+        setPeerAttachmentState('offline')
+        return false
+      }
+    }
+    const epoch = peerConfigEpochRef.current
+    const active = peerSyncInFlight.current
+    if (active?.epoch === epoch) return active.promise
+    if (active) await active.promise
+    if (epoch !== peerConfigEpochRef.current) return false
+    const run = (async () => {
+      setPeerAttachmentState('syncing')
+      try {
+        const startedAtRevision = revisionRef.current
+        const result = await createPeerAttachmentClient().synchronize(entriesRef.current)
+        if (
+          epoch !== peerConfigEpochRef.current ||
+          startedAtRevision !== revisionRef.current
+        ) return false
+        if (attachmentViewChanged(entriesRef.current, result.entries)) {
+          const persisted = persistSnapshot(result.entries)
+          if (!persisted.ok) {
+            setSaveState('error')
+            throw new Error('peer_attachment_materialization_failed')
+          }
+          entriesRef.current = result.entries
+          revisionRef.current += 1
+          setEntries(result.entries)
+          setSaveState('saved')
+        }
+        await result.commit()
+        setPeerAttachmentState('synced')
+        return true
+      } catch {
+        if (epoch === peerConfigEpochRef.current) setPeerAttachmentState('offline')
+        return false
+      }
+    })()
+    peerSyncInFlight.current = { epoch, promise: run }
+    try {
+      return await run
+    } finally {
+      if (peerSyncInFlight.current?.promise === run) peerSyncInFlight.current = null
+    }
+  }, [createPeerAttachmentClient, persistSnapshot])
+
+  const queuePeerAttachment = useCallback((
+    date: string,
+    coverImage: string | null,
+    updatedAt: string,
+  ) => {
+    let client: JournalPeerAttachmentClient
+    try {
+      client = createPeerAttachmentClient()
+    } catch {
+      setPeerAttachmentState('setup')
+      return
+    }
+    setPeerAttachmentState('syncing')
+    const previous = peerMutationInFlight.current
+    const mutation = (async () => {
+      if (previous) await previous
+      await client.queue(date, coverImage, updatedAt)
+    })()
+    peerMutationInFlight.current = mutation
+    void mutation.then(
+      () => {
+        if (peerMutationInFlight.current === mutation) {
+          peerMutationInFlight.current = null
+        }
+        void synchronizePeerAttachments()
+      },
+      () => {
+        if (peerMutationInFlight.current === mutation) {
+          peerMutationInFlight.current = null
+        }
+        setPeerAttachmentState('offline')
+      },
+    )
+  }, [createPeerAttachmentClient, synchronizePeerAttachments])
+
   useEffect(() => {
     if (!journalRootKey) return
     void flushLatestEntries()
@@ -373,6 +510,37 @@ function App() {
       document.removeEventListener("visibilitychange", resume);
     };
   }, [flushLatestEntries, journalRootKey]);
+
+  useEffect(() => {
+    if (
+      !journalRootKey ||
+      !normalizePeerAttachmentUrl(peerAttachmentUrl) ||
+      peerAttachmentToken.length < 32
+    ) {
+      setPeerAttachmentState('setup')
+      return
+    }
+    void synchronizePeerAttachments()
+    const retry = () => void synchronizePeerAttachments()
+    const resume = () => {
+      if (document.visibilityState === 'visible') void synchronizePeerAttachments()
+    }
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void synchronizePeerAttachments()
+    }, 30_000)
+    window.addEventListener('online', retry)
+    document.addEventListener('visibilitychange', resume)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('online', retry)
+      document.removeEventListener('visibilitychange', resume)
+    }
+  }, [
+    journalRootKey,
+    peerAttachmentToken,
+    peerAttachmentUrl,
+    synchronizePeerAttachments,
+  ])
 
   useEffect(() => {
     return () => {
@@ -434,6 +602,7 @@ function App() {
   }, [compactNavigation])
 
   function updateEntry(date: string, patch: Partial<JournalEntry>) {
+    const attachmentChanged = Object.hasOwn(patch, 'coverImage')
     const next = applyEntryPatch(entriesRef.current, date, patch)
     entriesRef.current = next
     revisionRef.current += 1
@@ -446,6 +615,9 @@ function App() {
     saveTimer.current = window.setTimeout(() => {
       void flushLatestEntries()
     }, 500)
+    if (attachmentChanged) {
+      queuePeerAttachment(date, next[date]?.coverImage ?? null, next[date].updatedAt)
+    }
   }
 
   async function deleteEntry(date: string) {
@@ -469,6 +641,7 @@ function App() {
       setEntries(next)
       const persisted = persistSnapshot(next)
       setSaveState(persisted.ok ? 'saved' : 'error')
+      queuePeerAttachment(date, null, new Date().toISOString())
       await flushLatestEntries()
     } catch {
       setSyncState('offline')
@@ -883,7 +1056,11 @@ function App() {
                 journalApiToken={journalApiToken}
                 journalRootKey={journalRootKey ? serializeRootKey(journalRootKey) : ''}
                 syncState={syncState}
+                peerAttachmentUrl={peerAttachmentUrl}
+                peerAttachmentToken={peerAttachmentToken}
+                peerAttachmentState={peerAttachmentState}
                 onCheckConnection={synchronize}
+                onCheckPeerConnection={synchronizePeerAttachments}
                 onSyncConfig={(url, token, rootKeyValue) => {
                   const normalizedUrl = safeHttpUrl(url)
                   const normalizedToken = token.trim()
@@ -917,6 +1094,36 @@ function App() {
                   setJournalRootKey(normalizedRootKey)
                   syncConfigEpochRef.current += 1
                   setSyncState('syncing')
+                  return true
+                }}
+                onPeerAttachmentConfig={(url, token) => {
+                  const normalizedUrl = normalizePeerAttachmentUrl(url)
+                  const normalizedToken = token.trim()
+                  if (
+                    !normalizedUrl ||
+                    normalizedToken.length < 32 ||
+                    !/^[A-Za-z0-9_-]+$/.test(normalizedToken)
+                  ) return false
+                  const urlResult = writeStorageValue(
+                    PEER_ATTACHMENT_URL_STORAGE_KEY,
+                    normalizedUrl,
+                  )
+                  const tokenResult = writeStorageValue(
+                    PEER_ATTACHMENT_TOKEN_STORAGE_KEY,
+                    normalizedToken,
+                  )
+                  if (!urlResult.ok) {
+                    setStorageIssue(urlResult.issue)
+                    return false
+                  }
+                  if (!tokenResult.ok) {
+                    setStorageIssue(tokenResult.issue)
+                    return false
+                  }
+                  setPeerAttachmentUrl(normalizedUrl)
+                  setPeerAttachmentToken(normalizedToken)
+                  peerConfigEpochRef.current += 1
+                  setPeerAttachmentState('syncing')
                   return true
                 }}
                 onChatGptUrl={(value) => {

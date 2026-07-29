@@ -98,6 +98,8 @@ export function createJournalApiRouter(store, token) {
       mdnsServiceType: '_poyi-journal._tcp.local',
       stableDeviceId: true,
       pairingToken: true,
+      dataPlane: 'encrypted_peer_attachments_only',
+      cloudAttachments: false,
     },
     limits: { listEntries: 100, appendCharacters: 100000 },
   })))
