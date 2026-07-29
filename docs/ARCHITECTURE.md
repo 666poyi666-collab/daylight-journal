@@ -98,6 +98,7 @@ type JournalBlock = {
 ## 独立 MCP 边界
 
 - `PoyiJournalMcp` 仅监听 `127.0.0.1:8780`，不注册其他项目工具，也不读取其他数据库。
+- 同一 loopback listener 从已验收的 `dist` 提供可安装 PWA；静态壳不带设备凭据或根密钥，8781 不提供前端资源。
 - 同一业务进程可在 Private/LocalSubnet 的 8781 提供带独立 Bearer capability 的附件密文 API，
   并通过 mDNS 发布稳定 serviceId；LAN listener 不注册正文 API、兼容 `/journal/*` 或 `/mcp`。
 - 8781 capability 单独生成并持久化，禁止与 8780 Journal API token 复用；MCP Resource 会剥离 `coverImage`，附件内容和存在性元数据均不进入 MCP。

@@ -7,8 +7,13 @@ import { createJournalApp, createJournalSyncApp } from '../../server.mjs'
 
 test('Journal v1 API authenticates, reports capabilities, and maps conflicts', async () => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'journal-api-'))
+  const webDir = path.join(dataDir, 'dist')
+  await fs.mkdir(webDir)
+  await fs.writeFile(path.join(webDir, 'index.html'), '<!doctype html><title>Journal installed app</title>')
+  await fs.writeFile(path.join(webDir, 'manifest.webmanifest'), '{"name":"Journal installed app"}')
   const runtime = await createJournalApp({
     dataDir,
+    webDir,
     host: '127.0.0.1',
     port: 0,
     auditFile: path.join(dataDir, 'audit.jsonl'),
@@ -34,6 +39,9 @@ test('Journal v1 API authenticates, reports capabilities, and maps conflicts', a
     assert.equal((await fetch(`${baseUrl}/journal/all`)).status, 401)
     assert.equal((await fetch(`${baseUrl}/journal/all`, { headers })).status, 200)
     assert.equal((await fetch(`${syncBaseUrl}/healthz`)).status, 200)
+    assert.match(await fetch(`${baseUrl}/`).then((response) => response.text()), /Journal installed app/)
+    assert.equal((await fetch(`${baseUrl}/manifest.webmanifest`)).status, 200)
+    assert.equal((await fetch(`${syncBaseUrl}/`)).status, 404)
 
     const protectedResource = await fetch(`${baseUrl}/.well-known/oauth-protected-resource/mcp`)
       .then((response) => response.json())

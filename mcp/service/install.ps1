@@ -78,7 +78,7 @@ Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 New-Item -ItemType Directory -Path $resolvedInstall, $resolvedData -Force | Out-Null
-foreach ($name in @('mcp', 'journal-api.mjs', 'journal-store.mjs', 'sync-merge.mjs',
+foreach ($name in @('dist', 'mcp', 'journal-api.mjs', 'journal-store.mjs', 'sync-merge.mjs',
         'mcp-server.mjs', 'package.json', 'package-lock.json')) {
     Copy-Item -LiteralPath (Join-Path $resolvedSource $name) -Destination $resolvedInstall -Recurse -Force
 }

@@ -22,6 +22,7 @@ test('Journal services, ports, and profile are isolated', async () => {
   assert.match(tunnelRun, /--profile journal/)
   assert.match(tunnelRun, /127\.0\.0\.1:8780\/readyz/)
   assert.match(mcpInstall, /serviceSid`:M[^\n]+\/T \/C/)
+  assert.match(mcpInstall, /@\('dist', 'mcp'/)
   assert.match(mcpInstall, /PoyiJournalSyncApi/)
   assert.match(mcpInstall, /RemoteAddress LocalSubnet/)
   assert.match(mcpInstall, /tunnelWasRunning/)

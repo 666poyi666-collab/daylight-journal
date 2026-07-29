@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import express from 'express'
 import cors from 'cors'
 import { Bonjour } from 'bonjour-service'
@@ -134,6 +136,22 @@ export async function createJournalApp(settings = getSettings()) {
   })
   app.get('/mcp', (_req, res) => res.status(405).json({ error: 'Use POST for MCP requests' }))
   app.delete('/mcp', (_req, res) => res.status(405).json({ error: 'Stateless MCP sessions cannot be deleted' }))
+
+  const webDir = settings.webDir || (
+    settings.projectRoot ? path.join(settings.projectRoot, 'dist') : ''
+  )
+  if (webDir && fs.existsSync(path.join(webDir, 'index.html'))) {
+    app.use(express.static(webDir, {
+      index: 'index.html',
+      setHeaders(res, filePath) {
+        if (filePath.endsWith('index.html') || filePath.endsWith('sw.js')) {
+          res.setHeader('Cache-Control', 'no-cache')
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+        }
+      },
+    }))
+  }
 
   return { app, store, audit, health, apiToken, peerAttachmentToken, settings }
 }

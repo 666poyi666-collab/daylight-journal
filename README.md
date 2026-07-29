@@ -83,6 +83,9 @@ LAN listener 不提供 `/mcp`，不依赖 ADB 或固定 IP。
 
 MCP 接口：`http://127.0.0.1:8780/mcp`
 
+Windows 安装服务同时在 `http://127.0.0.1:8780/` 提供当前 `dist` 的可安装 PWA；
+它与 MCP 共用进程但不共用正文 API 凭据，8781 仍只处理附件密文。
+
 ChatGPT 通过项目独立的 `PoyiJournalTunnel` 访问 MCP。Tunnel 是只出站的 Secure MCP
 Tunnel，MCP 不直接暴露公网，也不依赖 PersonalMcpGateway。安装、密钥和验收流程见
 [`docs/MCP-OPERATIONS.md`](docs/MCP-OPERATIONS.md)。
