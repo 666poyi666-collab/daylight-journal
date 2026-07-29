@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test:unit": "node --test tests/journal-model.test.ts tests/journal-lock.test.ts tests/review-prompt.test.ts tests/encrypted-sync.test.ts tests/app-v2-sync.test.ts tests/peer-attachment-sync.test.ts mcp/tests/unit/journal-store.test.mjs mcp/tests/unit/service-assets.test.mjs mcp/tests/integration/journal-api.test.mjs mcp/tests/contract/journal-mcp.test.mjs tests/sync-server.test.mjs",
+    "test:unit": "node --test tests/journal-model.test.ts tests/journal-lock.test.ts tests/review-prompt.test.ts tests/encrypted-sync.test.ts tests/app-v2-sync.test.ts tests/peer-attachment-sync.test.ts tests/desktop-pwa.test.mjs mcp/tests/unit/journal-store.test.mjs mcp/tests/unit/service-assets.test.mjs mcp/tests/integration/journal-api.test.mjs mcp/tests/contract/journal-mcp.test.mjs tests/sync-server.test.mjs",
     "test:app-sync": "node --test tests/app-v2-sync.test.ts tests/encrypted-sync.test.ts tests/peer-attachment-sync.test.ts",
     "test:e2e": "node tests/frontend-smoke.mjs",
     "test:mcp:e2e": "node mcp/tests/e2e/deployed-smoke.mjs",
