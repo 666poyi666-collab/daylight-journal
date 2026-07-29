@@ -8,7 +8,6 @@
 | 编号 | 严重度 | 状态 | 现象与影响 | 计划/验收 |
 | --- | --- | --- | --- | --- |
 | KR-001 | 高 | 暂缓 | 两台设备同时编辑同一天时按整日 `updatedAt` 后写覆盖，不是 block 级合并 | P2 设计 tombstone、块排序和冲突用例 |
-| KR-004 | 中 | 待处理 | 当前没有持久化离线队列，长时间离线后的自动重试能力有限 | P2 增加队列、退避和恢复测试 |
 | KR-005 | 中 | 暂缓 | GitHub 提供的是 debug 签名 APK，不适合作为正式商店或长期升级包 | 配置 release keystore、版本号和签名验证 |
 | KR-006 | 低 | 待上游 | MCP Inspector 1.0.0 在 Windows Node 24 完成响应后触发 libuv 退出断言 | 保留成功响应证据；CI/兼容 Node 复验并跟踪 Inspector 上游 |
 | KR-007 | 中 | 待上游 | MCP SDK 1.29 间接依赖的 Hono Windows 静态文件适配器有路径穿越公告 | Journal 只使用 Express、不挂载该适配器；持续审计并升级到上游修复版本 |
@@ -35,6 +34,8 @@
 | BUG-016 | 2026-07 | 服务验证发现敏感日志时仍可能以退出码 0 结束 | 匿名认证、LAN 隔离、单监听进程和敏感值扫描均改为硬断言；管理员上下文验证退出码 0 |
 | BUG-017 | 2026-07 | 浏览器默认 `fetch` 作为客户端成员调用时触发 `Illegal invocation`，V2 outbox 无法发出 | 默认 transport 改为保持浏览器全局调用语义；入口 E2E 捕获真实非空 mutation exchange |
 | BUG-018 | 2026-07 | 云附件对象链路与 LAN 全量正文兼容接口不符合“附件只在电脑与手机直连时同步”的边界 | 云 exchange 固定 `objects=[]`；新增私有地址白名单、独立附件 AAD/密文 pending/tombstone，并把 LAN 8781 收窄为附件密文接口；Node 集成测试覆盖公网拒绝、加密落盘、更新、删除、重启、离线保留与分歧拒绝 |
+| BUG-019 | 2026-07 | Journal Cloud MCP 只有密文 revision 元数据，电脑关机后 ChatGPT 无法读取正文，健康检查却容易被误当作完成 | V2 upsert 增加严格无附件 `mcpEntry`；ACK 时与密文 revision 同批维护 D1 可读镜像，delete 同批清除；隔离 Worker 以真实 OAuth JWT 完成 initialize、tools/list、非空 `journal_get_entry`、Resource、删除和恢复回归 |
+| BUG-020 | 2026-07 | 旧云日记没有可重试回填合同，直接执行 encrypted-only cutover 会拒绝迁移或导致旧表长期保留 | 新增 pending import 与 migration ledger；客户端同日去重/合并、断网重启续传，Worker 同批提交双投影与 ledger，本地 7 行/6 日期夹具、竞争、失败恢复和 fail-closed cutover 契约通过 |
 
 ## 新 Bug 模板
 

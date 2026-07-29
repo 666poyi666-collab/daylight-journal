@@ -6,6 +6,7 @@ import test from 'node:test'
 import {
   decryptMutation,
   emptySyncSnapshot,
+  encryptMutation,
   initializeRootKey,
   type EncryptedChange,
   type EncryptedMutation,
@@ -24,6 +25,16 @@ type StoredObject = {
 }
 
 type SequencedChange = EncryptedChange & { sequence: number }
+type WireMutation = EncryptedMutation & {
+  mcpEntry: Omit<JournalEntry, 'coverImage'> | null
+}
+
+type LegacyImport = {
+  migrationId: string
+  targetDate: string
+  legacyRevision: number
+  entry: Omit<JournalEntry, 'coverImage'>
+}
 
 class MemoryStore implements SyncStore {
   value = emptySyncSnapshot()
@@ -41,12 +52,16 @@ class V2Authority {
   readonly requests: Array<{ method: string; path: string; body: string }> = []
   readonly objects = new Map<string, StoredObject>()
   readonly entities = new Map<string, SequencedChange>()
+  readonly mcpEntries = new Map<string, Omit<JournalEntry, 'coverImage'>>()
   readonly operations = new Map<string, { request: string; acknowledgement: Record<string, unknown> }>()
   readonly changes: SequencedChange[] = []
   readonly deviceTokens = new Map<string, string>()
+  readonly legacyImports: LegacyImport[] = []
+  readonly completedMigrationIds = new Set<string>()
   fallbackCalls = 0
   objectRouteCalls = 0
   failNextExchange = false
+  failMutationExchanges = false
   private server = createServer((request, response) => void this.handle(request, response))
 
   approve(deviceId: string, secretCharacter: string): string {
@@ -188,7 +203,7 @@ class V2Authority {
         product: string
         deviceId: string
         cursor: string | null
-        mutations: EncryptedMutation[]
+        mutations: WireMutation[]
       }
       if (
         envelope.protocolVersion !== 2 ||
@@ -197,6 +212,10 @@ class V2Authority {
         !this.authenticated(request, envelope.deviceId)
       ) {
         this.json(response, 401, { error: 'invalid_v2_envelope' })
+        return
+      }
+      if (this.failMutationExchanges && envelope.mutations.length > 0) {
+        this.json(response, 503, { error: 'offline_fixture' })
         return
       }
       const acknowledged: Record<string, unknown>[] = []
@@ -212,6 +231,10 @@ class V2Authority {
             !mutation.ciphertext ||
             !mutation.ciphertextSha256 ||
             !mutation.nonce ||
+            !mutation.mcpEntry ||
+            !Array.isArray(mutation.migrationIds) ||
+            mutation.mcpEntry.date !== mutation.entityId ||
+            Object.hasOwn(mutation.mcpEntry, 'coverImage') ||
             createHash('sha256').update(ciphertext).digest('hex') !== mutation.ciphertextSha256 ||
             !objectsValid
           ) {
@@ -222,7 +245,9 @@ class V2Authority {
           mutation.ciphertext !== null ||
           mutation.ciphertextSha256 !== null ||
           mutation.nonce !== null ||
-          mutation.objects.length !== 0
+          mutation.objects.length !== 0 ||
+          mutation.migrationIds.length !== 0 ||
+          mutation.mcpEntry !== null
         ) {
           this.json(response, 400, { error: 'invalid_encrypted_tombstone' })
           return
@@ -248,14 +273,18 @@ class V2Authority {
         }
         const current = this.entities.get(mutation.entityId)
         const currentRevision = current?.revision ?? 0
-        if (mutation.baseRevision !== currentRevision) {
+        const migrationsValid = mutation.migrationIds.every((migrationId) => {
+          const pending = this.legacyImports.find((item) => item.migrationId === migrationId)
+          return pending?.targetDate === mutation.entityId && !this.completedMigrationIds.has(migrationId)
+        })
+        if (mutation.baseRevision !== currentRevision || !migrationsValid) {
           conflicts.push({
             outcome: 'conflict',
             opId: mutation.opId,
             entityType: mutation.entityType,
             entityId: mutation.entityId,
             operation: mutation.operation,
-            error: 'REVISION_CONFLICT',
+            error: mutation.migrationIds.length > 0 ? 'MIGRATION_CONFLICT' : 'REVISION_CONFLICT',
             current: this.currentState(mutation.entityId),
             candidate: mutation,
           })
@@ -281,10 +310,14 @@ class V2Authority {
         }
         this.entities.set(mutation.entityId, change)
         this.changes.push(change)
+        for (const migrationId of mutation.migrationIds) this.completedMigrationIds.add(migrationId)
         if (mutation.operation === 'delete') {
+          this.mcpEntries.delete(mutation.entityId)
           for (const object of this.objects.values()) {
             if (object.entityId === mutation.entityId) object.tombstoned = true
           }
+        } else if (mutation.mcpEntry) {
+          this.mcpEntries.set(mutation.entityId, structuredClone(mutation.mcpEntry))
         }
         const acknowledgement = {
           outcome: 'acknowledged',
@@ -300,6 +333,9 @@ class V2Authority {
       const cursor = envelope.cursor === null ? 0 : Number.parseInt(envelope.cursor.slice(1), 36)
       const changes = this.changes.filter((change) => change.sequence > cursor)
       const nextSequence = changes.at(-1)?.sequence ?? cursor
+      const pendingLegacyImports = this.legacyImports.filter(
+        (item) => !this.completedMigrationIds.has(item.migrationId),
+      )
       this.json(response, 200, {
         protocolVersion: 2,
         envelopeVersion: 1,
@@ -309,6 +345,8 @@ class V2Authority {
         changes: changes.map(({ sequence: _sequence, ...change }) => change),
         nextCursor: `c${nextSequence.toString(36)}`,
         hasMore: false,
+        legacyImports: pendingLegacyImports.slice(0, 25),
+        legacyHasMore: pendingLegacyImports.length > 25,
         serverTime: new Date().toISOString(),
       })
       return
@@ -379,8 +417,181 @@ test('approved-device snapshots are isolated and corruption fails closed', async
   assert.equal((await approved.read()).cursor, 'c1')
   assert.equal((await otherAuthority.read()).cursor, null)
   const storedKey = [...values.keys()][0]
+  const rootKey = await initializeRootKey()
+  const legacyMutation = await encryptMutation(rootKey, {
+    opId: crypto.randomUUID(),
+    entityId: '2026-07-20',
+    baseRevision: 0,
+    operation: 'upsert',
+  }, { entry: journalEntry('2026-07-20', 'LEGACY_SNAPSHOT', '2026-07-20T01:00:00.000Z') })
+  const legacySnapshot = emptySyncSnapshot() as SyncSnapshot & {
+    pendingLegacyImports?: unknown
+    legacyHasMore?: unknown
+  }
+  const legacyWireMutation = structuredClone(legacyMutation) as EncryptedMutation & {
+    migrationIds?: string[]
+  }
+  delete legacyWireMutation.migrationIds
+  legacySnapshot.outbox = [legacyWireMutation as EncryptedMutation]
+  delete legacySnapshot.pendingLegacyImports
+  delete legacySnapshot.legacyHasMore
+  values.set(storedKey, JSON.stringify(legacySnapshot))
+  const normalized = await approved.read()
+  assert.deepEqual(normalized.outbox[0].migrationIds, [])
+  assert.deepEqual(normalized.pendingLegacyImports, [])
+  assert.equal(normalized.legacyHasMore, false)
   values.set(storedKey, '{corrupt')
   await assert.rejects(() => approved.read(), /SyntaxError|invalid_sync_snapshot/)
+})
+
+test('legacy imports merge without duplicate text and resume from the durable outbox after restart', async () => {
+  const authority = new V2Authority()
+  const baseUrl = await authority.start()
+  const rootKey = await initializeRootKey()
+  const store = new MemoryStore()
+  const token = authority.approve('journal-migration-restart', 'm')
+  const client = new JournalV2SyncClient({ baseUrl, deviceToken: token, rootKey, store })
+  const date = '2026-07-19'
+  const local = journalEntry(date, 'LOCAL_BASE', '2026-07-19T02:00:00.000Z')
+  const exactLegacy = structuredClone(local)
+  exactLegacy.blocks[0].id = 'legacy-cloud-same-content'
+  const extraLegacy = journalEntry(date, 'LEGACY_EXTRA', '2026-07-19T04:00:00.000Z')
+  extraLegacy.createdAt = '2026-07-19T01:00:00.000Z'
+  extraLegacy.blocks[0].createdAt = extraLegacy.createdAt
+  extraLegacy.blocks[0].writeTimes = [extraLegacy.createdAt]
+  extraLegacy.blocks[0].writeStops = [{
+    sessionIndex: 0,
+    offset: extraLegacy.content.length,
+    at: extraLegacy.updatedAt,
+  }]
+  authority.legacyImports.push(
+    {
+      migrationId: '11111111-1111-4111-8111-111111111111',
+      targetDate: date,
+      legacyRevision: 3,
+      entry: exactLegacy,
+    },
+    {
+      migrationId: '22222222-2222-4222-8222-222222222222',
+      targetDate: date,
+      legacyRevision: 1,
+      entry: extraLegacy,
+    },
+  )
+  try {
+    authority.failMutationExchanges = true
+    await assert.rejects(
+      () => client.synchronize({ [date]: local }),
+      /v2_exchange_failed:503/,
+    )
+    assert.equal(store.value.outbox.length, 1)
+    assert.equal(store.value.pendingLegacyImports.length, 2)
+    assert.deepEqual(
+      new Set(store.value.outbox[0].migrationIds),
+      new Set(authority.legacyImports.map((item) => item.migrationId)),
+    )
+
+    authority.failMutationExchanges = false
+    const restarted = new JournalV2SyncClient({ baseUrl, deviceToken: token, rootKey, store })
+    const result = await restarted.synchronize({ [date]: local })
+    assert.equal(result.entries[date].blocks.length, 2, 'the exact legacy copy must not duplicate a block')
+    assert.equal(result.entries[date].content, 'LOCAL_BASE\n\n---\n\nLEGACY_EXTRA')
+    assert.equal(result.entries[date].title, 'LEGACY_EXTRA')
+    assert.equal(result.entries[date].mood, extraLegacy.mood)
+    assert.equal(result.entries[date].createdAt, '2026-07-19T01:00:00.000Z')
+    assert.deepEqual(
+      new Set(result.entries[date].tags),
+      new Set([...local.tags, ...extraLegacy.tags]),
+    )
+    assert.equal(authority.completedMigrationIds.size, 2)
+    assert.equal(store.value.outbox.length, 0)
+    assert.equal(store.value.pendingLegacyImports.length, 0)
+    assert.equal(authority.mcpEntries.get(date)?.content, result.entries[date].content)
+  } finally {
+    await authority.stop()
+  }
+})
+
+test('two devices competing for one migrationId converge on the winning revision', async () => {
+  const authority = new V2Authority()
+  const baseUrl = await authority.start()
+  const rootKey = await initializeRootKey()
+  const storeA = new MemoryStore()
+  const storeB = new MemoryStore()
+  const clientA = new JournalV2SyncClient({
+    baseUrl,
+    deviceToken: authority.approve('journal-migration-a', 'n'),
+    rootKey,
+    store: storeA,
+  })
+  const clientB = new JournalV2SyncClient({
+    baseUrl,
+    deviceToken: authority.approve('journal-migration-b', 'o'),
+    rootKey,
+    store: storeB,
+  })
+  const date = '2026-07-18'
+  authority.legacyImports.push({
+    migrationId: '33333333-3333-4333-8333-333333333333',
+    targetDate: date,
+    legacyRevision: 2,
+    entry: journalEntry(date, 'COMPETING_LEGACY', '2026-07-18T01:00:00.000Z'),
+  })
+  try {
+    authority.failMutationExchanges = true
+    await assert.rejects(() => clientA.synchronize({}), /v2_exchange_failed:503/)
+    await assert.rejects(() => clientB.synchronize({}), /v2_exchange_failed:503/)
+    assert.equal(storeA.value.outbox.length, 1)
+    assert.equal(storeB.value.outbox.length, 1)
+
+    authority.failMutationExchanges = false
+    const winner = await clientA.synchronize({})
+    const follower = await clientB.synchronize({})
+    assert.equal(winner.entries[date].content, 'COMPETING_LEGACY')
+    assert.equal(follower.entries[date].content, 'COMPETING_LEGACY')
+    assert.equal(authority.completedMigrationIds.size, 1)
+    assert.equal(authority.entities.get(date)?.revision, 1)
+    assert.equal(storeB.value.outbox.length, 0)
+    assert.equal(storeB.value.pendingLegacyImports.length, 0)
+    assert.ok(storeB.value.records[date].conflicts.some(
+      (conflict) => conflict.error === 'MIGRATION_CONFLICT',
+    ))
+  } finally {
+    await authority.stop()
+  }
+})
+
+test('legacy migration drains 26 dates in batches of at most 25', async () => {
+  const authority = new V2Authority()
+  const baseUrl = await authority.start()
+  const rootKey = await initializeRootKey()
+  const client = new JournalV2SyncClient({
+    baseUrl,
+    deviceToken: authority.approve('journal-migration-batches', 'p'),
+    rootKey,
+    store: new MemoryStore(),
+  })
+  for (let day = 1; day <= 26; day += 1) {
+    const date = `2026-06-${String(day).padStart(2, '0')}`
+    authority.legacyImports.push({
+      migrationId: `00000000-0000-4000-8000-${String(day).padStart(12, '0')}`,
+      targetDate: date,
+      legacyRevision: 1,
+      entry: journalEntry(date, `LEGACY_${day}`, `${date}T01:00:00.000Z`),
+    })
+  }
+  try {
+    const result = await client.synchronize({})
+    assert.equal(Object.keys(result.entries).length, 26)
+    assert.equal(authority.completedMigrationIds.size, 26)
+    const mutationCounts = authority.requests.map((request) => (
+      JSON.parse(request.body) as { mutations: WireMutation[] }
+    ).mutations.length)
+    assert.ok(mutationCounts.every((count) => count <= 25))
+    assert.ok(mutationCounts.includes(25))
+  } finally {
+    await authority.stop()
+  }
 })
 
 test('a newer remote text revision keeps the cover that exists only on this device', async () => {
@@ -418,7 +629,7 @@ test('a newer remote text revision keeps the cover that exists only on this devi
     assert.equal(authority.entities.get(date)?.revision, 2)
     assert.equal(authority.objectRouteCalls, 0)
     assert.ok(authority.requests.every((request) => {
-      const envelope = JSON.parse(request.body) as { mutations: EncryptedMutation[] }
+      const envelope = JSON.parse(request.body) as { mutations: WireMutation[] }
       return envelope.mutations.every((mutation) => mutation.objects.length === 0)
     }))
   } finally {
@@ -459,6 +670,8 @@ test('V2 client covers create, update, first pull, conflict, delete and restore 
     assert.equal(created.entries[date].content, createdMarker)
     assert.equal(created.entries[date].coverImage, coverImage)
     assert.equal(authority.entities.get(date)?.revision, 1)
+    assert.equal(authority.mcpEntries.get(date)?.content, createdMarker)
+    assert.equal(Object.hasOwn(authority.mcpEntries.get(date) ?? {}, 'coverImage'), false)
     assert.equal(authority.objects.size, 0)
 
     const firstPull = await clientB.synchronize({})
@@ -475,6 +688,7 @@ test('V2 client covers create, update, first pull, conflict, delete and restore 
     assert.equal(updated.entries[date].content, updatedMarker)
     assert.equal(updated.entries[date].coverImage, coverImage)
     assert.equal(authority.entities.get(date)?.revision, 2)
+    assert.equal(authority.mcpEntries.get(date)?.content, updatedMarker)
 
     const initialC = await clientC.synchronize({})
     assert.equal(initialC.entries[date].content, updatedMarker)
@@ -483,8 +697,9 @@ test('V2 client covers create, update, first pull, conflict, delete and restore 
     const conflictEntries: JournalEntries = {
       [date]: journalEntry(date, conflictMarker, '2026-07-28T04:00:00.000Z', coverImage),
     }
-    authority.failNextExchange = true
+    authority.failMutationExchanges = true
     await assert.rejects(() => clientC.synchronize(conflictEntries), /v2_exchange_failed:503/)
+    authority.failMutationExchanges = false
     assert.equal(storeC.value.outbox.length, 1, 'offline mutation must remain durable')
     assert.deepEqual(storeC.value.outbox[0].objects, [])
     const pendingPayload = await decryptMutation(rootKey, storeC.value.outbox[0])
@@ -511,6 +726,7 @@ test('V2 client covers create, update, first pull, conflict, delete and restore 
     assert.equal(deleted.entries[date], undefined)
     assert.equal(authority.entities.get(date)?.operation, 'delete')
     assert.equal(authority.entities.get(date)?.revision, 5)
+    assert.equal(authority.mcpEntries.has(date), false)
 
     const restoreMarker = 'APP_V2_RESTORED_PRIVATE_e803'
     plaintextMarkers.push(restoreMarker)
@@ -521,12 +737,14 @@ test('V2 client covers create, update, first pull, conflict, delete and restore 
     assert.equal(restored.entries[date].content, restoreMarker)
     assert.equal(authority.entities.get(date)?.operation, 'upsert')
     assert.equal(authority.entities.get(date)?.revision, 6)
+    assert.equal(authority.mcpEntries.get(date)?.content, restoreMarker)
 
     await clientD.queueDelete(date)
     const deletedBeforeFirstPull = await clientD.synchronize({})
     assert.equal(deletedBeforeFirstPull.entries[date], undefined)
     assert.equal(authority.entities.get(date)?.operation, 'delete')
     assert.equal(authority.entities.get(date)?.revision, 7)
+    assert.equal(authority.mcpEntries.has(date), false)
     assert.equal(storeD.value.pendingDeletes.length, 0)
     assert.equal(storeD.value.records[date].conflicts[0].candidate?.operation, 'delete')
 
@@ -534,10 +752,15 @@ test('V2 client covers create, update, first pull, conflict, delete and restore 
     assert.equal(authority.objectRouteCalls, 0)
     assert.ok(authority.requests.every((request) => request.path === '/sync/v2/exchange'))
     for (const request of authority.requests) {
-      const envelope = JSON.parse(request.body) as { mutations: EncryptedMutation[] }
+      const envelope = JSON.parse(request.body) as { mutations: WireMutation[] }
       for (const mutation of envelope.mutations) {
         assert.deepEqual(mutation.objects, [])
-        if (mutation.operation === 'delete') continue
+        if (mutation.operation === 'delete') {
+          assert.equal(mutation.mcpEntry, null)
+          continue
+        }
+        assert.ok(mutation.mcpEntry)
+        assert.equal(Object.hasOwn(mutation.mcpEntry, 'coverImage'), false)
         const payload = await decryptMutation(rootKey, mutation)
         const keys: string[] = []
         JSON.stringify(payload, (key, value: unknown) => {
@@ -548,8 +771,10 @@ test('V2 client covers create, update, first pull, conflict, delete and restore 
       }
     }
     for (const marker of plaintextMarkers) {
-      assert.ok(authority.requests.every((request) => !request.body.includes(marker)), marker)
+      assert.ok(authority.requests.some((request) => request.body.includes(marker)), marker)
     }
+    assert.ok(authority.requests.every((request) => !request.body.includes('data:image')))
+    assert.ok(authority.requests.every((request) => !request.body.includes('coverImage')))
     assert.ok(authority.requests.every((request) => !request.body.includes(rootKey.rawKey)))
   } finally {
     await authority.stop()

@@ -66,8 +66,9 @@ npm run test:pwa
 同步/MCP 变更还要验证 `/healthz`、`/readyz`、`/metrics`、`/v1/*`、兼容同步接口和相关 MCP 工具，
 测试数据目录必须通过 `JOURNAL_DATA_DIR` 隔离。
 
-Windows 服务、Tunnel、Inspector 和 ChatGPT 验收命令见 `MCP-OPERATIONS.md`。不得用
-PersonalMcpGateway 的服务、profile、端口或密钥代替 Journal 独立链路。
+Journal Cloud Worker、OAuth MCP、Windows 兼容服务和 ChatGPT 验收命令见
+`MCP-OPERATIONS.md`。不得用 PersonalMcpGateway 的服务、profile、端口或密钥代替
+Journal 独立链路；本机 Tunnel 也不能作为 PC-off 证据。
 
 手机/平板不使用桌面 loopback。安装版在 Private/LocalSubnet 的 8781 发布
 `_poyi-journal._tcp.local`，设置页保存发现到的 `.local` 地址和配对令牌。调试和生产均
@@ -93,6 +94,8 @@ npx cap copy android
 - Build、Lint、单元测试及受影响的 E2E/PWA/接口测试通过。
 - Android 变更已重建、安装并检查目标设备。
 - GitHub Release 标明版本、构建类型、安装限制和校验值。
+- staging 与 production 记录相同 commit、前端 bundle hash、APK hash 和 Worker bundle hash；
+  staging 通过后提升原文件，禁止重新 build。staging 只使用虚构数据和独立设备凭据。
 
 ## 文档归属
 

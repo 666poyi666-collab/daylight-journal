@@ -375,7 +375,7 @@ export function SettingsPage({
                 {syncConfigSaved ? '已保存' : '保存'}
               </button>
             </div>
-            <p>配置 Journal V2 服务、独立设备令牌和端到端加密密钥。</p>
+            <p>配置 Journal 独立云同步、设备令牌和设备副本加密密钥。</p>
             <div className="settings-fields">
               <input
                 type="url"
@@ -407,10 +407,12 @@ export function SettingsPage({
                 }}
                 autoComplete="off"
                 placeholder="jk1.1.…"
-                aria-label="Journal 端到端加密密钥"
+                aria-label="Journal 设备同步加密密钥"
               />
             </div>
-            <small>新设备首次恢复前必须安全传入同一把 jk1 密钥；密钥只保存在本机，不发送到服务端。</small>
+            <small>
+              jk1 密钥只保存在本机。为保证电脑关机后 ChatGPT 仍能复盘，正文、标题、记录片和标签会同步到这个 Journal 云端的 OAuth 只读 MCP；图片附件永不上传云端。
+            </small>
           </div>
         </section>
         <section>

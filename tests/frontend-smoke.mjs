@@ -81,7 +81,8 @@ async function openApp({
   })
   await page.route(/\/sync\/v2\/exchange$/, async (route) => {
     const request = route.request()
-    if (failSync) {
+    const envelope = JSON.parse(request.postData() || '{}')
+    if (failSync && envelope.mutations.length > 0) {
       await route.fulfill({
         status: 503,
         contentType: 'application/json',
@@ -89,7 +90,6 @@ async function openApp({
       })
       return
     }
-    const envelope = JSON.parse(request.postData() || '{}')
     requests.push(envelope)
     if (envelope.mutations.length > 0) {
       for (const resolve of mutationWaiters.splice(0)) resolve(envelope)
@@ -120,6 +120,8 @@ async function openApp({
         })),
         nextCursor: 'c1',
         hasMore: false,
+        legacyImports: [],
+        legacyHasMore: false,
         serverTime: changedAt,
       }),
     })
@@ -217,6 +219,8 @@ try {
     assert(rootBundle)
     for (const mutation of mutationExchange.mutations) {
       assert.deepEqual(mutation.objects, [])
+      assert.deepEqual(mutation.migrationIds, [])
+      assert.equal(Object.hasOwn(mutation.mcpEntry ?? {}, 'coverImage'), false)
       const payload = await decryptMutation(rootBundle, mutation)
       const payloadKeys = []
       JSON.stringify(payload, (key, value) => {
@@ -225,7 +229,12 @@ try {
       })
       assert.equal(payloadKeys.some((key) => /cover|base64|path|url/i.test(key)), false)
     }
-    assert(requests.every((request) => !JSON.stringify(request).includes('图片处理中继续输入也不能被覆盖')))
+    assert(mutationExchange.mutations.some(
+      (mutation) => mutation.mcpEntry?.content === '图片处理中继续输入也不能被覆盖',
+    ))
+    assert(requests.every((request) => !JSON.stringify(request).includes('data:image')))
+    assert(requests.every((request) => !JSON.stringify(request).includes('coverImage')))
+    assert(requests.every((request) => !JSON.stringify(request).includes(rootKey)))
     await page.screenshot({
       path: path.join(artifactDir, 'desktop.png'),
       fullPage: true,

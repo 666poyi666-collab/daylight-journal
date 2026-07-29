@@ -3,24 +3,35 @@
 本文是拾光日记 MCP 的长期运维事实来源。不得把 tunnel ID、API key、Bearer token、
 真实日记、ChatGPT 会话或未经裁剪的生产日志写入本文或 Git。
 
-## 固定架构
+## 生产固定架构
 
 ```text
 ChatGPT「拾光日记」应用
-→ OpenAI Secure MCP Tunnel（journal-tunnel）
-→ PoyiJournalTunnel（Windows 自动服务）
-→ http://127.0.0.1:8780/mcp
-→ PoyiJournalMcp（Windows 自动服务）
-→ JournalStore / %ProgramData%\Poyi\JournalMcp
+→ Journal OAuth authorization server
+→ https://journal-mcp...workers.dev/mcp
+→ JournalMCP Durable Object
+→ D1 journal_mcp_entries（正文类字段，无附件）
 
-手机/平板 → `_poyi-journal._tcp.local` → 8781 认证业务 API（无 MCP）
+网页/手机/平板 → /sync/v2/exchange → encrypted replica + journal_mcp_entries
+手机/平板 ↔ `_poyi-journal._tcp.local` → 8781 认证附件密文 API（无 MCP）
 ```
 
-Journal 运行时不依赖 PersonalMcpGateway。禁止复用其他项目的 MCP Server、tunnel ID、
-runtime key、profile、端口、数据库或日志。Journal 服务停止只能让 Journal 模块不可用，
-不得停止或重启其他项目服务。
+Journal 运行时不依赖 Windows、PersonalMcpGateway 或其他产品。设备 `dj1`、管理员
+`SYNC_KEY`、OAuth access token 和 resource-server client secret 互不通用。旧本机 MCP/Tunnel
+仅保留维护兼容，不能作为电脑关机验收链路。
 
-## 服务与端口
+## 云端服务与固定标识
+
+| 项目 | 固定值 |
+| --- | --- |
+| MCP endpoint | Journal Worker 的 `https://<host>/mcp` |
+| OAuth resource/audience | 与 MCP endpoint 完全相同 |
+| OAuth scope | `journal:read`；当前 Cloud MCP 只读 |
+| 同步入口 | `/sync/v2/exchange` |
+| MCP 可读表 | `journal_mcp_entries` |
+| 附件 | 云端永久禁用；所有 `/sync/v2/objects*` 返回 410 |
+
+## 本机兼容服务与端口
 
 | 项目 | 固定值 |
 | --- | --- |
@@ -46,6 +57,11 @@ MCP 服务提供 `GET /healthz`、`GET /readyz`、`GET /metrics`。8781 只提�
 
 ## 认证与权限
 
+- Cloud `/mcp`：只接受 RS256、`typ=at+jwt`、精确 issuer/resource/audience 的 OAuth token，
+  每次请求执行 fail-closed introspection。`journal_get_status` 也只要求 `journal:read`。
+- Cloud `/sync/v2/*`：只接受可撤销 `dj1` 设备凭据；浏览器 Origin 必须精确 allowlist。
+- Cloud 管理设备：只接受仓库外 `SYNC_KEY`；它不能调用 MCP。
+
 - `/v1/*`：独立随机 Bearer token，首次启动生成到运行数据目录；匿名请求返回 401。
 - `/mcp`：只监听 loopback，由独立 Secure MCP Tunnel 和 OpenAI tunnel/runtime key 保护，
   不直接暴露公网。
@@ -61,6 +77,18 @@ MCP 服务提供 `GET /healthz`、`GET /readyz`、`GET /metrics`。8781 只提�
 明文变量、命令行输出或日志。
 
 ## API、工具与 Resource
+
+Cloud MCP 工具：
+
+- `journal_get_status`
+- `journal_list_recent`
+- `journal_search`
+- `journal_get_entry`
+
+Cloud Resource：`journal://entries/{date}`。完整正文通过 embedded Resource 与
+`resources/read` 提供；所有输出都不包含 `coverImage`、图片、附件路径或附件存在性。
+
+以下 7 个写入工具属于本机兼容 MCP，不是 PC-off Cloud MCP：
 
 版本化 API：`/v1/status`、`/v1/health`、`/v1/capabilities`、列表、单篇读取、创建、
 追加和元数据更新。Gateway 或 MCP 层不得绕过 JournalStore 直接读 JSON。
@@ -82,6 +110,18 @@ Resource：`journal://entries/{date}`。`journal_get_entry` 的普通文本与 `
 
 ## 安装和升级
 
+Cloud staging 必须按以下顺序：仓外加密 D1 备份 → additive migrations 到 `0010` →
+同一 Worker bundle 部署 → `/readyz` → 虚构数据同步 → OAuth MCP 非空调用。staging 已完成
+`0006` 的空库可直接应用 `0009`/`0010`；`wrangler deploy` 不会自动执行 SQL migration。
+
+production 旧库禁止执行 `0006`。先执行 `0002`（仅尚未有这些列时）、`0003`、`0004`、
+更新后的 `0005`、`0007`、`0008`、`0009`、`0010`，部署与 staging 完全相同的 Worker
+bundle，再由两个独立 `dj1` 中任一端完成认证 migration。`/readyz.migration` 必须从
+`discovery_pending` 经过 `migrating` 到 `cutover_required`；只有 preflight 证明旧行、ledger、
+密文实体和 MCP 镜像全部一致后，才执行 `0011_legacy_cutover.sql`。任何计数不一致都中止。
+
+本机兼容服务仍按以下方式维护：
+
 在管理员 PowerShell 中：
 
 ```powershell
@@ -100,6 +140,27 @@ $key = Read-Host 'Journal Tunnel runtime API key' -AsSecureString
 Journal 的卸载脚本；禁止调用 PersonalMcpGateway 或其他项目的 WinSW 可执行文件。
 
 ## 验收命令
+
+Cloud 代码与 staging：
+
+```powershell
+cd C:\开发\mcp开发\journal-cloud-mcp
+npm test
+npx wrangler deploy --dry-run --config wrangler.staging.jsonc --outdir .wrangler/candidate
+Get-FileHash .wrangler/candidate/index.js -Algorithm SHA256
+curl.exe -f https://<journal-staging>/healthz
+curl.exe -f https://<journal-staging>/readyz
+curl.exe -f https://<journal-staging>/.well-known/oauth-protected-resource/mcp
+```
+
+staging 与 production 必须记录同一 commit 和 `.wrangler/candidate/index.js` SHA-256，
+production 不得重新生成 bundle。`/readyz` 必须报告
+`encrypted_replica_plus_mcp_read_model`、`oauth: ready` 和 `migration.status: complete`。随后以
+Journal OAuth token 执行 `initialize`、`tools/list`、`journal_get_entry` 和
+`resources/read`，正文必须非空且不含附件字段。停止发起 mutation 的本地客户端后重复读取，
+结果仍必须成功，才算 PC-off 等价通过。
+
+本机兼容链路：
 
 ```powershell
 npm run lint
@@ -127,13 +188,15 @@ Node 24 上若 Inspector 在打印成功响应后因已知上游退出断言返�
 
 ## 真实 ChatGPT 验收
 
-1. Tunnel doctor/ready 均通过后，在 ChatGPT 创建独立“拾光日记”应用并绑定 Journal Tunnel。
-2. 调用 `journal_get_status` 和 `journal_list_recent`，确认只访问 Journal。
-3. 调用 `journal_get_entry` 后读取其 `journal://entries/{date}`，确认 Resource 可读。
-4. 用新 requestId 和当前 revision 做一次显式元数据更新；优先把值更新为原值，避免改变正文。
-5. 原样重复同一 requestId，结果必须 `replayed: true` 且 revision 不再次增加。
-6. 重启 `PoyiJournalMcp` 后再重复 requestId，仍必须重放。
-7. 分别停止 Journal MCP/Tunnel，确认其他 MCP 不受影响；反向停止其他 MCP 时 Journal 仍可用。
+1. ChatGPT 独立“拾光日记”应用绑定 Journal Worker `/mcp` 与其 OAuth metadata，不绑定本机 Tunnel。
+2. 调用 `journal_get_status`，确认 `pcOffMcpRead=true` 且 `readableEntries>0`。
+3. 调用 `journal_list_recent`、`journal_search` 和 `journal_get_entry`，再读取
+   `journal://entries/{date}`；正文必须来自真实同步 revision，不是健康占位符。
+4. 关闭本机 Journal 客户端/电脑后重复第 2–3 步，调用仍成功。
+5. 删除一篇测试记录后，Cloud MCP 不能再读到其正文；重新写入后按更高 revision 恢复。
+6. 检查响应、D1 schema 与日志不含 `coverImage`、图片字节、附件路径或 token。
+7. 迁移发布额外核对 `sourceRows=7`、`discovered=7`、`completed=7`，并按 preflight
+   得到的去重目标日期数核对当前密文/MCP 投影；保存脱敏计数，不得保存旧正文或 import payload。
 
 真实验收证据只记录时间、工具名、状态、revision/replayed、脱敏 Tunnel 状态和截图路径。
 禁止保存正文、标题、标签、图片、token、Cookie 或完整网络日志。
@@ -145,7 +208,7 @@ Node 24 上若 Inspector 在打印成功响应后因已知上游退出断言返�
 服务日志按 10 MB、3 个文件轮转。支持包只收集版本、服务状态、健康结果、计数指标和
 脱敏错误码；采集后必须人工检查再分享。
 
-## 2026-07-26 本机证据
+## 2026-07-26 本机兼容链路历史证据
 
 - `PoyiJournalMcp` 安装为 Automatic (Delayed)，服务账户为
   `NT SERVICE\PoyiJournalMcp`。

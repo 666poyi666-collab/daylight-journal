@@ -23,13 +23,14 @@
 | [UX-VISUAL-DIRECTION](UX-VISUAL-DIRECTION.md) | Ink & Daylight 视觉设计约束 |
 | [ROADMAP](ROADMAP.md) | 迭代顺序与技术债 |
 
-## 当前状态（2026-07-26）
+## 当前状态（2026-07-30）
 
 - 写日记、历史、日历、心情、标签、可选单图封面：可用
-- 手机/平板/网页正文同步：本地实现为加密 V2，云端验收状态以 staging 证据为准
+- 手机/平板/网页正文同步：V2 设备密文副本 + 无附件 Cloud MCP 可读镜像；本地契约已通过，staging 部署与设备升级待最终验收
 - 封面附件：只通过电脑与手机同网/直连时的 8781 加密通道传输，不上传云端；待双端真机验收
 - 独立 `PoyiJournalMcp`：本地安装、健康检查、故障自动恢复和 MCP 契约已验证
-- 独立 `PoyiJournalTunnel` 与 ChatGPT「拾光日记」应用：真实读写、Resource、重放和重启恢复已验收
+- Journal Cloud OAuth MCP：本地隔离 Worker 已完成真实 OAuth initialize、tools/list、非空工具调用、Resource、删除与恢复回归；不依赖电脑在线
+- 独立 `PoyiJournalTunnel`：保留历史本机兼容证据，不再作为 PC-off 生产链路
 - Obsidian：目前提供 Markdown 导出，尚未做 Vault 双向同步
 - 前端视觉：Ink & Daylight 已落地；样式收敛为 `index.css` + `journal-ui.css` 两层，四档响应式与深浅色均已回归
 - 工程治理：需求基线、开发手册、Bug 台账和变更日志已建立

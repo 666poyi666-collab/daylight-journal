@@ -1,11 +1,30 @@
 # 同步与 MCP 协议
 
-## 生产加密同步
+## 生产云同步
 
-- `POST /sync/v2/exchange`：唯一云端数据交换入口，只传输正文、标题、记录片和标签的 AES-GCM 密文 mutation、conflict、change 和 cursor。
-- 云端 mutation 的 `objects` 固定为空；生产客户端不调用 `/sync/v2/objects/*`，封面、base64、文件路径和媒体 URL 均不进入云请求、D1、R2 或 MCP。
+- `POST /sync/v2/exchange`：唯一云端数据交换入口。每个 upsert 同时包含设备恢复使用的
+  AES-GCM 密文和无附件 `mcpEntry`；两者共用 `opId`、revision、冲突与 ACK。
+- `mcpEntry` 只允许日期、标题、正文、记录片、心情、标签与时间戳。Worker 严格校验，
+  ACK 时与密文实体同批写入 `journal_mcp_entries`；冲突不覆盖，delete 同批删除可读行。
+- 云端 mutation 的 `objects` 固定为空；生产客户端不调用 `/sync/v2/objects/*`，封面、base64、
+  文件路径和媒体 URL 均不进入云请求的可读字段、D1、R2 或 MCP。
 - 客户端没有 `/journal/all`、`/journal/sync` 或 `/sync/v1/*` fallback；V2 不可用时保留本机稿件与 durable outbox。
 - 设置页只有同时保存 `dj1` 设备凭据和 `jk1` 端到端根密钥后，才视为设备已批准并启动同步。
+
+## 旧数据迁移合同
+
+- response 固定带 `legacyImports` 与 `legacyHasMore`；每个 import 只有不可猜测
+  `migrationId`、目标日期、旧 revision 和无附件 JournalEntry。
+- mutation 固定带 `migrationIds`；普通同步为 `[]`。旧本地 snapshot 缺少该字段时按 `[]`
+  恢复，收到 import 后先和 cursor/change 一起原子持久化，再排入加密 outbox。
+- 同日内容语义完全一致时不重复 block；不同时保留双方不同 blocks，标题和心情取
+  `updatedAt` 较新值，标签取并集，`createdAt` 取较早值。无日期旧行按 `created_at` 的
+  Asia/Shanghai 日期归入当天，已有日记时成为额外记录片。
+- 服务端只向有效 `dj1` 返回 pending import。密文实体、MCP 镜像、change、ACK 与 ledger
+  完成标记在一个 D1 batch 提交；重复 ID、双设备竞争或中途失败不会把半条迁移标成完成。
+- 客户端顺序固定为：重试已有 outbox → 拉 changes/imports → 原子保存 → 合并并排队 →
+  每批最多 25 条发送。只有 ACK、cursor、materialization、pending import 和 outbox 一起
+  落盘后才算完成。
 
 ## 电脑与手机直连附件
 
@@ -69,16 +88,17 @@ MCP 工具与 Resource 在序列化前剥离 `coverImage`，也不返回附件�
 写工具必须显式提供 requestId 和 expectedRevision。审计日志只允许时间、事件、请求 ID、
 工具/Resource 名、耗时、结果和错误码，禁止正文、标题、标签、图片和任何令牌。
 
-## ChatGPT 链路
+## ChatGPT PC-off 链路
 
 ```text
 ChatGPT 拾光日记应用
-→ journal-tunnel（独立固定 tunnel_id）
-→ PoyiJournalTunnel
-→ 127.0.0.1:8780/mcp
-→ PoyiJournalMcp / JournalStore
+→ Journal Cloud OAuth（journal:read）
+→ https://<journal-worker>/mcp
+→ JournalMCP Durable Object
+→ D1 journal_mcp_entries
 ```
 
-Journal 不接入 PersonalMcpGateway，不与 Watch、Foxlink、Music 共用 MCP Server、Tunnel、
-profile、端口、数据或日志。MCP 不直接暴露公网。具体安装与真实调用验收见
-`MCP-OPERATIONS.md`。
+该链路不依赖 Windows、PersonalMcpGateway 或其他产品。`dj1` 设备凭据、`SYNC_KEY` 和 OAuth
+token 互不通用。MCP 暴露状态、最近、搜索、按日期完整读取和 Resource；不提供附件，也不
+返回附件存在性。旧 `PoyiJournalMcp`/`PoyiJournalTunnel` 只保留本地兼容和维护，不作为
+PC-off 验收证据。具体部署和真实调用验收见 `MCP-OPERATIONS.md`。

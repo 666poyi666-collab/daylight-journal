@@ -6,11 +6,13 @@
 React/Vite/Capacitor
         │
         ├─ localStorage（本端快速读写）
-        ├─ 正文 AES-256-GCM durable outbox
+        ├─ 正文 durable outbox
         │           │
-        │   /sync/v2/exchange（objects=[]）
+        │   /sync/v2/exchange（密文副本 + 无附件 mcpEntry）
         │           │
-        │   Journal encrypted text authority
+        │   Journal Cloud Worker / D1
+        │        ├─ encrypted replica（设备恢复）
+        │        └─ journal_mcp_entries（OAuth MCP 只读）
         │
         └─ 附件 AES-256-GCM peer pending
                     │
@@ -19,6 +21,8 @@ React/Vite/Capacitor
             opaque peer attachment store
 
 手机/平板 → mDNS `_poyi-journal._tcp.local` → LAN 8781（仅附件密文，无正文/MCP）
+
+ChatGPT → Journal Cloud OAuth MCP → D1 `journal_mcp_entries`（电脑关机仍可读）
 ```
 
 ## 代码职责
@@ -79,23 +83,35 @@ type JournalBlock = {
 
 - 本地优先：网络不可用仍可写
 - 生产客户端只调用 `/sync/v2/*`；V2 失败进入离线状态，不探测或回退明文 V1 路由
-- 正文、标题、记录片和标签在离开设备前加密；云 exchange 的附件集合固定为空
+- 正文、标题、记录片和标签在 V2 mutation 中同时形成设备密文副本和严格无附件的
+  `mcpEntry`；后者只供 Journal Cloud OAuth MCP 在电脑关机时读取
 - 封面只进入独立的直连加密 envelope；公网地址和云 Tunnel 在发请求前即被拒绝
-- 本地编辑分别进入正文 durable outbox 与附件 peer pending；直连重试复用同一密文 envelope
+- 本地编辑分别进入正文 durable outbox 与附件 peer pending；正文 ACK、MCP 可读镜像和
+  tombstone 在 D1 同一批次提交，冲突 mutation 不更新镜像
+- 旧云记录先进入 durable pending import；客户端按日期无损合并后携带 `migrationIds`
+  加密回传，ACK 时 pending import 与 outbox 同一次 snapshot 提交删除
 - 首次正文拉取在解密与 schema 验证后推进 cursor；附件只在解密、digest 与 AAD 验证后写入本地
 - 冲突保留 server current 与本地 candidate；较新的本地稿会基于 authority revision 重新排队
 - 整篇删除是显式操作，先持久化 tombstone；同日期重新写作按更高 revision 恢复
 - 服务端同步写入串行执行，并在写入前重新读取最新副本，避免并发请求和慢设备把旧修订写回
 - 只上传有标题或正文的记录
-- 日记可带一张可选封面图；附件密文只发往同机或私有网段 8781，data URL/base64 不进入云 exchange、D1、R2 或 MCP
+- 日记可带一张可选封面图；附件密文只发往同机或私有网段 8781，`coverImage`、data URL、
+  base64、路径和媒体 URL 不进入云 exchange 的 `mcpEntry`、D1、R2 或 MCP
 - 同步失败显示“已保存到本机 · 点击重试”，不能阻塞输入；点击后立即触发一次同步重试
 - 编辑变更立即写入本地 localStorage；远端同步仍采用 500ms 防抖，关闭或切后台不会丢最后一段输入
 - 本地数据和远端响应都经过结构校验；存储不可用、配额不足或数据损坏会进入明确错误状态，不再静默当作空库
 - 损坏或非法本地数据在首次渲染即进入保存错误态，主界面说明恢复副本已保留；编辑器页脚不得同时显示“已自动保存”
-- 同步调度采用拉取单飞与推送串行队列：轮询、网络恢复、页面恢复同时触发时复用同一个拉取请求；编辑、复盘和恢复同步按队列发送，避免旧请求覆盖新稿
+- 同步调度先串行清空已有 outbox，再拉取 changes/imports，最后排队并分批发送新 mutation；
+  轮询、网络恢复、页面恢复同时触发时复用同一个同步 promise，避免旧请求覆盖新稿
 - AI 复盘只有在当前修订版本完成推送后才开放；同步、剪贴板或弹窗失败分别显示恢复动作
 
 ## 独立 MCP 边界
+
+- 生产 ChatGPT 主链路是 Journal 自己的 Cloud Worker `/mcp`，只接受精确 issuer、audience、
+  scope、RS256 签名并经 introspection 确认的 OAuth access token；它不依赖 Windows 在线。
+- Cloud MCP 提供 `journal_get_status`、`journal_list_recent`、`journal_search`、
+  `journal_get_entry` 和 `journal://entries/{date}`，只读 D1 的无附件投影。
+- 本机 `PoyiJournalMcp`/Tunnel 保留给本地维护与兼容验收，不再作为 PC-off 生产前提。
 
 - `PoyiJournalMcp` 仅监听 `127.0.0.1:8780`，不注册其他项目工具，也不读取其他数据库。
 - 同一 loopback listener 从已验收的 `dist` 提供可安装 PWA；静态壳不带设备凭据或根密钥，8781 不提供前端资源。

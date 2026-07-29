@@ -14,13 +14,16 @@
 - 按 Ink & Daylight 方向重构页面模块、编辑器和 AI 状态（已完成：token 分层、页面层级、四档响应式与深浅色）
 - 完成手机、平板、网页三种断点验收（已建立 390 / 768 / 1440 自动截图回归）
 - 建立生产 PWA 离线刷新回归，确保首次加载后的应用壳和本地草稿可恢复
-- 完成独立 Journal MCP、Windows 自动恢复服务、固定 Secure MCP Tunnel 和 ChatGPT 应用验收
+- 完成独立 Journal Cloud OAuth MCP 与无附件 D1 读模型（本地契约已完成；staging 非空数据、
+  ChatGPT 应用和真实 PC-off 轮次待验收）
+- 本机 MCP、Windows 自动恢复服务和 Secure MCP Tunnel 作为兼容维护链路保留
 
 ## P2：可靠性
 
 - 服务端同步冲突日志与数据备份
 - 可编辑同步地址和连接测试
-- 真正的离线队列与失败重试
+- 将携带 `mcpEntry` 的客户端版本发布到网页、手机和平板，并完成升级兼容验收
+- 完成 staging 非空数据、真实 ChatGPT OAuth 和三轮 PC-off 验收
 
 ## P3：Obsidian 与复盘深度
 

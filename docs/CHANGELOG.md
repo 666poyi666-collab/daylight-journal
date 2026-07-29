@@ -24,6 +24,14 @@
 
 ### Changed
 
+- V2 同步新增 `legacyImports`/`legacyHasMore` 与 durable `migrationIds`：客户端先恢复 outbox、
+  再拉取并原子保存旧行，按日期去重/合并后以每批最多 25 条回传；两设备竞争只允许一方完成 ledger。
+- staging 与 production 改为提升同一 commit 和同一构建产物；同步 endpoint 与独立 `dj1`/共享
+  `jk1` 通过现有设置页配置，不再为 production 重新制作 UI 或 build。
+- Journal V2 mutation 现在同时提交设备密文副本与无附件 `mcpEntry`；正文、标题、记录片、
+  心情、标签和时间戳可由 Journal Cloud OAuth MCP 在电脑关机时读取，`jk1` 根密钥仍只留本机。
+- ChatGPT 生产主链路改为 Journal 自己的 Cloud Worker `/mcp`；本机
+  `PoyiJournalMcp`/`PoyiJournalTunnel` 降为兼容维护，不再作为 PC-off 前提。
 - Journal 客户端正文同步切换到 AES-256-GCM V2：durable outbox、首次拉取、显式删除、tombstone 恢复和冲突重排均走 `/sync/v2/exchange`，不再回退明文 V1。
 - 封面附件退出云端对象链路，改为电脑与手机同网/直连时的独立 AES-GCM V1 通道；公网 URL 在请求前被拒绝，云 mutation 固定 `objects=[]`。
 - LAN 8781 收窄为认证后的附件密文 GET/PUT，不再复制 8780 的正文业务 API、兼容 `/journal/*` 或 MCP。
@@ -52,6 +60,14 @@
 
 ### Fixed
 
+- 修复复盘提示词保留 `journal://entries/{date}` 占位符的问题；现在复制实际所选日期 URI，
+  且点击复盘仍等待当前本地 revision 完成 ACK。
+- 修复旧 7 条明文云记录缺少一次性、可重试迁移闭环的问题；migration ledger、密文实体、
+  MCP 镜像、change 与 ACK 原子提交，cutover 在任何一条缺失时 fail-closed。
+- 修复 Cloud MCP 只能列密文 revision、无法在电脑关机后向 ChatGPT 返回真实正文的问题；
+  D1 可读镜像只在 ACK 时更新，冲突不覆盖，删除会清除，恢复按更高 revision 重建。
+- 修复 `journal_get_status` 被 OAuth scope 路由误判为写操作的问题；Cloud MCP 四个工具均使用
+  `journal:read`，设备 token、管理员 key 与 OAuth token 保持隔离。
 - 附件直连增加持久化密文 pending、幂等重放、tombstone、相同时间戳分歧与 revision 回退拒绝；附件 materialize 成功后才提交本地观察状态。
 - 8781 附件服务改用独立持久化 capability；主 API token 无法访问附件，MCP 工具和 Resource 不再序列化附件或附件存在性。
 - 补齐 ACK 提交崩溃重试、重复附件提交、错误根密钥、tombstone 与断线重连回归。
@@ -82,8 +98,11 @@
 
 ### Verified
 
-- 真实链路：新 UI 写入 → `/journal/sync` → 服务端落库 → MCP `journal_get_entry` /
-  `journal_list_recent` 读回 → 新设备拉取还原，浏览器控制台零错误。
+- 隔离 Cloudflare Worker/D1 使用真实 RS256 `at+jwt` 与 introspection 完成
+  `initialize → tools/list → journal_get_entry → resources/read`，读取非空测试正文；删除后正文不可读、
+  恢复后重新可读，D1/MCP 不含 `coverImage`、图片字节、路径或附件存在性。
+- 历史本机兼容链路：新 UI 写入 → `/journal/sync` → 本机服务落库 → MCP 读回 → 新设备
+  拉取还原；该证据不再用于宣称 PC-off。
 - 真机：Redmi Note 11T Pro（Android 15）经网络 ADB 安装调试包，竖屏、横屏、深色、抽屉、
   输入法工具条与四个页面逐项走查通过。
 

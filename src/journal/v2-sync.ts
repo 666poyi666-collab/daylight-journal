@@ -12,6 +12,7 @@ import {
   type EncryptedMutation,
   type EncryptedObjectRef,
   type EncryptedState,
+  type PendingLegacyImport,
   type RootKeyBundle,
   type SyncRecord,
   type SyncSnapshot,
@@ -20,6 +21,7 @@ import {
 import {
   decodeJournalEntries,
   hasEntryContent,
+  journalBlocksToContent,
   type JournalEntries,
   type JournalEntry,
 } from './model.ts'
@@ -45,7 +47,13 @@ type ExchangeResponse = {
   changes: EncryptedChange[]
   nextCursor: string
   hasMore: boolean
+  legacyImports: LegacyJournalImport[]
+  legacyHasMore: boolean
   serverTime: string
+}
+
+type LegacyJournalImport = PendingLegacyImport & {
+  entry: Omit<JournalEntry, 'coverImage'>
 }
 
 export type JournalV2SyncResult = {
@@ -107,8 +115,12 @@ function isEncryptedMutation(value: unknown): value is EncryptedMutation {
     isSha256(value.aadHash) &&
     Array.isArray(value.objects) &&
     value.objects.every(isEncryptedObjectRef) &&
+    Array.isArray(value.migrationIds) &&
+    value.migrationIds.length <= 25 &&
+    value.migrationIds.every(isUuid) &&
+    new Set(value.migrationIds).size === value.migrationIds.length &&
     (operation === 'delete'
-      ? value.ciphertext === null && value.ciphertextSha256 === null && value.nonce === null && value.objects.length === 0
+      ? value.ciphertext === null && value.ciphertextSha256 === null && value.nonce === null && value.objects.length === 0 && value.migrationIds.length === 0
       : typeof value.ciphertext === 'string' &&
         /^[A-Za-z0-9_-]+$/.test(value.ciphertext) &&
         isSha256(value.ciphertextSha256) &&
@@ -129,6 +141,7 @@ function isEncryptedState(value: unknown): value is EncryptedState {
     nonce: value.nonce,
     aadHash: value.aadHash,
     objects: value.objects,
+    migrationIds: [],
   }
   return isEncryptedMutation(candidate) &&
     Number.isSafeInteger(value.revision) &&
@@ -164,6 +177,7 @@ function isSyncRecord(value: unknown): value is SyncRecord {
     nonce: value.nonce,
     aadHash: value.aadHash,
     objects: value.objects,
+    migrationIds: [],
   }
   return Number.isSafeInteger(value.revision) &&
     Number(value.revision) > 0 &&
@@ -175,6 +189,28 @@ function isSyncRecord(value: unknown): value is SyncRecord {
     value.conflicts.every(isEncryptedConflict)
 }
 
+function parseLegacyImport(value: unknown): LegacyJournalImport | null {
+  if (
+    !isRecord(value) ||
+    !isUuid(value.migrationId) ||
+    !isDate(value.targetDate) ||
+    !Number.isSafeInteger(value.legacyRevision) ||
+    Number(value.legacyRevision) < 1 ||
+    !isRecord(value.entry) ||
+    Object.hasOwn(value.entry, 'coverImage')
+  ) return null
+  const decoded = decodeJournalEntries({ [value.targetDate]: value.entry })
+  const entry = decoded.entries[value.targetDate]
+  if (decoded.invalidRoot || decoded.invalidKeys.length || !entry) return null
+  const { coverImage: _coverImage, ...attachmentFree } = entry
+  return {
+    migrationId: value.migrationId,
+    targetDate: value.targetDate,
+    legacyRevision: Number(value.legacyRevision),
+    entry: attachmentFree,
+  }
+}
+
 function parseSnapshot(raw: string): SyncSnapshot {
   const value: unknown = JSON.parse(raw)
   if (!isRecord(value) || (value.cursor !== null && (typeof value.cursor !== 'string' || !/^c[0-9a-z]+$/.test(value.cursor)))) {
@@ -183,8 +219,20 @@ function parseSnapshot(raw: string): SyncSnapshot {
   if (!isRecord(value.records) || !Array.isArray(value.outbox) || !isRecord(value.attachments)) {
     throw new Error('invalid_sync_snapshot')
   }
+  for (const mutation of value.outbox) {
+    if (isRecord(mutation) && mutation.migrationIds === undefined) mutation.migrationIds = []
+  }
   const pendingDeletes = value.pendingDeletes === undefined ? [] : value.pendingDeletes
   if (!Array.isArray(pendingDeletes) || !pendingDeletes.every(isDate)) throw new Error('invalid_sync_snapshot')
+  const pendingLegacyImports = value.pendingLegacyImports === undefined ? [] : value.pendingLegacyImports
+  const parsedLegacyImports = Array.isArray(pendingLegacyImports)
+    ? pendingLegacyImports.map(parseLegacyImport)
+    : []
+  if (
+    !Array.isArray(pendingLegacyImports) ||
+    parsedLegacyImports.some((item) => item === null) ||
+    (value.legacyHasMore !== undefined && typeof value.legacyHasMore !== 'boolean')
+  ) throw new Error('invalid_sync_snapshot')
   for (const [entityId, record] of Object.entries(value.records)) {
     if (!isDate(entityId) || !isSyncRecord(record)) throw new Error('invalid_sync_snapshot')
   }
@@ -201,7 +249,12 @@ function parseSnapshot(raw: string): SyncSnapshot {
       throw new Error('invalid_sync_snapshot')
     }
   }
-  return { ...JSON.parse(JSON.stringify(value)) as SyncSnapshot, pendingDeletes: [...pendingDeletes] }
+  return {
+    ...JSON.parse(JSON.stringify(value)) as SyncSnapshot,
+    pendingDeletes: [...pendingDeletes],
+    pendingLegacyImports: parsedLegacyImports as LegacyJournalImport[],
+    legacyHasMore: value.legacyHasMore ?? false,
+  }
 }
 
 export class BrowserSyncStore implements SyncStore {
@@ -265,6 +318,7 @@ function stateAsMutation(state: EncryptedState): EncryptedMutation {
     nonce: state.nonce,
     aadHash: state.aadHash,
     objects: state.objects,
+    migrationIds: [],
   }
 }
 
@@ -281,6 +335,7 @@ function changeAsMutation(change: EncryptedChange): EncryptedMutation {
     nonce: change.nonce,
     aadHash: change.aadHash,
     objects: change.objects,
+    migrationIds: [],
   }
 }
 
@@ -296,6 +351,8 @@ function parseExchangeResponse(value: unknown): ExchangeResponse {
     typeof value.nextCursor !== 'string' ||
     !/^c[0-9a-z]+$/.test(value.nextCursor) ||
     typeof value.hasMore !== 'boolean' ||
+    !Array.isArray(value.legacyImports) ||
+    typeof value.legacyHasMore !== 'boolean' ||
     !isTimestamp(value.serverTime)
   ) {
     throw new Error('invalid_v2_exchange_response')
@@ -319,9 +376,15 @@ function parseExchangeResponse(value: unknown): ExchangeResponse {
       ...item,
       opId: item.operationId,
       baseRevision: Number(item.revision) - 1,
+      migrationIds: [],
     })
   })) throw new Error('invalid_v2_exchange_response')
-  return value as ExchangeResponse
+  const legacyImports = value.legacyImports.map(parseLegacyImport)
+  if (
+    legacyImports.some((item) => item === null) ||
+    new Set(legacyImports.map((item) => item?.migrationId)).size !== legacyImports.length
+  ) throw new Error('invalid_v2_exchange_response')
+  return { ...value, legacyImports: legacyImports as LegacyJournalImport[] } as ExchangeResponse
 }
 
 function latestChangesForResponse(response: ExchangeResponse): EncryptedChange[] {
@@ -331,6 +394,62 @@ function latestChangesForResponse(response: ExchangeResponse): EncryptedChange[]
     if (!current || change.revision > current.revision) latest.set(change.entityId, change)
   }
   return [...latest.values()]
+}
+
+function blockFingerprint(block: JournalEntry['blocks'][number]): string {
+  const { id: _id, ...semantic } = block
+  return stableJson(semantic)
+}
+
+function entryFingerprint(entry: Omit<JournalEntry, 'coverImage'>): string {
+  return stableJson({
+    title: entry.title,
+    content: entry.content,
+    blocks: entry.blocks.map(blockFingerprint),
+    mood: entry.mood,
+    tags: [...entry.tags].sort(),
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  })
+}
+
+function mergeLegacyEntry(
+  current: JournalEntry | undefined,
+  legacy: Omit<JournalEntry, 'coverImage'>,
+  migrationId: string,
+): JournalEntry {
+  if (!current) return { ...legacy, blocks: legacy.blocks.map((block) => ({ ...block })) }
+  const { coverImage: _coverImage, ...attachmentFreeCurrent } = current
+  if (entryFingerprint(attachmentFreeCurrent) === entryFingerprint(legacy)) return current
+
+  const blocks = current.blocks.map((block) => ({ ...block }))
+  const blockFingerprints = new Set(blocks.map(blockFingerprint))
+  const blockIds = new Set(blocks.map((block) => block.id))
+  for (const [index, source] of legacy.blocks.entries()) {
+    const fingerprint = blockFingerprint(source)
+    if (blockFingerprints.has(fingerprint)) continue
+    let id = source.id
+    if (blockIds.has(id)) id = `legacy-${migrationId}-${index + 1}`
+    blocks.push({ ...source, id })
+    blockIds.add(id)
+    blockFingerprints.add(fingerprint)
+  }
+
+  const legacyIsNewer = Date.parse(legacy.updatedAt) > Date.parse(current.updatedAt)
+  return {
+    schemaVersion: 2,
+    date: current.date,
+    title: legacyIsNewer ? legacy.title : current.title,
+    content: journalBlocksToContent(blocks),
+    blocks,
+    mood: legacyIsNewer ? legacy.mood : current.mood,
+    tags: [...new Set([...current.tags, ...legacy.tags])],
+    ...(current.coverImage ? { coverImage: current.coverImage } : {}),
+    createdAt: Date.parse(legacy.createdAt) < Date.parse(current.createdAt)
+      ? legacy.createdAt
+      : current.createdAt,
+    updatedAt: legacyIsNewer ? legacy.updatedAt : current.updatedAt,
+  }
 }
 
 export class JournalV2SyncClient {
@@ -361,17 +480,28 @@ export class JournalV2SyncClient {
   }
 
   async synchronize(localEntries: JournalEntries): Promise<JournalV2SyncResult> {
-    let state = await this.store.read()
-    const knownEntries = await this.materialize(state)
-    const optimistic = this.mergeDesired(localEntries, knownEntries, state)
-    await this.reconcile(optimistic, state)
-    await this.drain(true)
-    state = await this.store.read()
-    const remoteEntries = await this.materialize(state)
-    const desired = this.mergeDesired(localEntries, remoteEntries, state)
-    await this.reconcile(desired, state)
     await this.drain(false)
-    state = await this.store.read()
+    await this.drain(true)
+
+    let state = await this.store.read()
+    for (let round = 0; round < MAX_EXCHANGE_ROUNDS; round += 1) {
+      const remoteEntries = await this.materialize(state)
+      const desired = this.mergeDesired(localEntries, remoteEntries, state)
+      const migrations = this.mergePendingLegacyImports(desired, state.pendingLegacyImports)
+      await this.reconcile(migrations.entries, state, migrations.idsByDate)
+      await this.drain(false)
+      state = await this.store.read()
+      if (state.pendingLegacyImports.length === 0 && !state.legacyHasMore) break
+      if (state.pendingLegacyImports.length === 0) {
+        await this.drain(true)
+        const refreshed = await this.store.read()
+        if (refreshed.pendingLegacyImports.length === 0 && refreshed.legacyHasMore) {
+          throw new Error('legacy_migration_made_no_progress')
+        }
+        state = refreshed
+      }
+      if (round === MAX_EXCHANGE_ROUNDS - 1) throw new Error('legacy_migration_round_limit')
+    }
     return {
       entries: this.preserveLocalCovers(await this.materialize(state), localEntries),
       conflictCount: Object.values(state.records).reduce((sum, record) => sum + record.conflicts.length, 0),
@@ -404,6 +534,13 @@ export class JournalV2SyncClient {
   }
 
   private async exchange(batch: EncryptedMutation[], cursor: string | null): Promise<ExchangeResponse> {
+    const mutations = await Promise.all(batch.map(async (mutation) => ({
+      ...mutation,
+      objects: [],
+      mcpEntry: mutation.operation === 'delete'
+        ? null
+        : parsePayload(await decryptMutation(this.root, mutation), mutation.entityId).entry,
+    })))
     const response = await this.fetcher(`${this.baseUrl}/sync/v2/exchange`, {
       method: 'POST',
       headers: this.headers(true),
@@ -413,7 +550,7 @@ export class JournalV2SyncClient {
         product: 'journal',
         deviceId: this.deviceId,
         cursor,
-        mutations: batch.map((mutation) => ({ ...mutation, objects: [] })),
+        mutations,
       }),
     })
     if (!response.ok) throw new Error(`v2_exchange_failed:${response.status}`)
@@ -445,11 +582,15 @@ export class JournalV2SyncClient {
         response.conflicts,
         response.changes,
         response.nextCursor,
+        [],
+        response.legacyImports,
+        response.legacyHasMore,
       )
       const next = await this.store.read()
       const progressed = response.acknowledged.length > 0 ||
         response.conflicts.some((conflict) => !conflict.retryable) ||
         response.changes.length > 0 ||
+        response.legacyImports.length > 0 ||
         next.cursor !== state.cursor
       if (!progressed && next.outbox.length > 0) throw new Error('v2_exchange_made_no_progress')
       exchangeRequired = response.hasMore || next.outbox.length > 0
@@ -509,7 +650,33 @@ export class JournalV2SyncClient {
     return this.preserveLocalCovers(desired, local)
   }
 
-  private async reconcile(desired: JournalEntries, initialState: SyncSnapshot): Promise<void> {
+  private mergePendingLegacyImports(
+    desired: JournalEntries,
+    pending: PendingLegacyImport[],
+  ): { entries: JournalEntries; idsByDate: Map<string, string[]> } {
+    const entries = { ...desired }
+    const idsByDate = new Map<string, string[]>()
+    for (const pendingImport of pending) {
+      const legacyImport = parseLegacyImport(pendingImport)
+      if (!legacyImport) throw new Error('invalid_pending_legacy_import')
+      entries[legacyImport.targetDate] = mergeLegacyEntry(
+        entries[legacyImport.targetDate],
+        legacyImport.entry,
+        legacyImport.migrationId,
+      )
+      idsByDate.set(legacyImport.targetDate, [
+        ...(idsByDate.get(legacyImport.targetDate) ?? []),
+        legacyImport.migrationId,
+      ])
+    }
+    return { entries, idsByDate }
+  }
+
+  private async reconcile(
+    desired: JournalEntries,
+    initialState: SyncSnapshot,
+    migrationIdsByDate = new Map<string, string[]>(),
+  ): Promise<void> {
     let state = initialState
     let currentEntries = await this.materialize(state)
     const entityIds = new Set([
@@ -535,13 +702,19 @@ export class JournalV2SyncClient {
         continue
       }
       const current = currentEntries[entityId]
-      if (current && stableJson(payloadFromEntry(current)) === stableJson(payloadFromEntry(target))) continue
+      const migrationIds = migrationIdsByDate.get(entityId) ?? []
+      if (
+        migrationIds.length === 0 &&
+        current &&
+        stableJson(payloadFromEntry(current)) === stableJson(payloadFromEntry(target))
+      ) continue
       const baseRevision = record?.revision ?? 0
       const mutation = await encryptMutation(this.root, {
         opId: crypto.randomUUID(),
         entityId,
         baseRevision,
         operation: 'upsert',
+        migrationIds,
       }, payloadFromEntry(target))
       await this.encrypted.queue(mutation, [], target.updatedAt)
       state = await this.store.read()

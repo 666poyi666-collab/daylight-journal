@@ -10,9 +10,9 @@
 - 自动保存到本地 localStorage
 - 可选应用锁：4–6 位数字密码本机哈希存储，防翻看；不加密数据、不上传密码
 - 书写字体可选衬线/黑体：衬线为默认，中文衬线子集随应用打包，手机离线同样生效
-- 手机、平板、网页通过同步服务合并日记
+- 手机、平板、网页通过 Journal Cloud Worker 合并日记；电脑关机时云端仍在线
 - ChatGPT 自定义连接器「拾光日记」
-- 独立 Journal MCP：7 个 `journal_*` 工具和按日期读取完整正文的 Resource
+- 独立 Journal Cloud MCP：OAuth 只读工具和按日期读取完整正文的 Resource，不依赖电脑在线
 - 点击 AI 复盘时固定打开 ChatGPT「日记」项目，并复制复盘提示词
 - Markdown 导出，方便后续进入 Obsidian
 
@@ -38,8 +38,8 @@ $env:VITE_CHATGPT_PROJECT_URL = 'https://chatgpt.com/g/your-project'
 npm run build
 ```
 
-公开构建不会内置个人 Tunnel、设备凭据、根密钥或 ChatGPT 项目标识。未配置 URL 时仍显示
-`http://127.0.0.1:8780`，但生产客户端只调用 `/sync/v2/*`；必须在设置页保存有效的
+公开构建不会内置设备凭据、根密钥或 ChatGPT 项目标识。未配置 URL 时不启动远端同步；
+生产客户端只调用 `/sync/v2/*`；必须在设置页保存有效的
 `dj1` 设备凭据和共享 `jk1` 根密钥后才会同步，不会回退 `/journal/*` 或 V1。
 
 Android：
@@ -49,17 +49,19 @@ npx cap copy android
 ./android/gradlew.bat -p android assembleDebug
 ```
 
-真机 staging 验收使用独立包名与存储沙箱，避免读取或覆盖正式 Journal 数据：
+发布候选只构建一次。先记录 commit、`dist` hash 和 APK hash，再用虚构数据连接 staging；
+staging 通过后直接提升同一份 `dist`/APK，不重新 build，也不制作另一版 UI：
 
 ```powershell
-$env:VITE_JOURNAL_API_URL = 'https://<journal-staging-worker>'
 npm run build
 npx cap copy android
-./android/gradlew.bat -p android assembleStaging
+./android/gradlew.bat -p android assembleDebug
+Get-FileHash android/app/build/outputs/apk/debug/app-debug.apk -Algorithm SHA256
 ```
 
-staging 包以“拾光 Staging”独立显示，只用于验收；完成后清除构建变量并重新执行
-默认 build/copy，不能把 staging 资源当作 production APK 发布。
+staging endpoint、虚构 `dj1` 与测试 `jk1` 通过现有设置页配置，不进入构建。验收设备必须先
+备份并清空应用数据，避免把 production 日记带入 staging；不能用 `assembleStaging` 产物替代
+最终待发布 APK。
 
 ## Android 安装包
 
@@ -76,7 +78,7 @@ npm run mcp
 ```
 
 `http://127.0.0.1:8780/journal/*` 是旧本地兼容接口，不再是生产客户端数据链路。
-生产同步 authority 必须提供 `/sync/v2/exchange` 和 `/sync/v2/objects/*`。
+生产同步 authority 必须提供 `/sync/v2/exchange`；云端对象路由永久禁用并返回 410。
 
 手机/平板同步：通过设置页保存 mDNS 地址（`http://<host>.local:8781`）和独立配对令牌；
 LAN listener 不提供 `/mcp`，不依赖 ADB 或固定 IP。
@@ -89,8 +91,9 @@ Windows 安装服务同时在 `http://127.0.0.1:8780/` 提供当前 `dist` 的�
 `http://127.0.0.1:8782/` 持久提供同一构建，并创建无浏览器工具栏的“拾光”
 Edge App 开始菜单入口。
 
-ChatGPT 通过项目独立的 `PoyiJournalTunnel` 访问 MCP。Tunnel 是只出站的 Secure MCP
-Tunnel，MCP 不直接暴露公网，也不依赖 PersonalMcpGateway。安装、密钥和验收流程见
+ChatGPT 生产连接器直接访问 Journal 自己的 Cloud OAuth MCP，因此电脑关机后仍能读取
+已同步正文。它不依赖 PersonalMcpGateway 或其他产品；本机 `PoyiJournalTunnel` 仅保留
+兼容维护。部署、OAuth 和 PC-off 验收流程见
 [`docs/MCP-OPERATIONS.md`](docs/MCP-OPERATIONS.md)。
 
 ## 文档入口
@@ -121,4 +124,5 @@ data/                MCP 服务运行数据（本地生成，不提交隐私内�
 docs/                项目文档与治理规则
 ```
 
-数据默认保存在浏览器本地，并同步到服务端 `data/journals.json`。不要把真实日记提交到 Git。
+数据默认保存在浏览器本地，并通过 Journal Cloud V2 同步设备密文副本和无附件 MCP
+正文镜像。本机 `data/journals.json` 只属于旧兼容服务，不是生产同步 authority。不要把真实日记提交到 Git。

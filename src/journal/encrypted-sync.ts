@@ -25,9 +25,10 @@ export type EncryptedMutation = {
   nonce: string | null
   aadHash: string
   objects: EncryptedObjectRef[]
+  migrationIds: string[]
 }
 
-export type EncryptedChange = Omit<EncryptedMutation, 'opId' | 'baseRevision'> & {
+export type EncryptedChange = Omit<EncryptedMutation, 'opId' | 'baseRevision' | 'migrationIds'> & {
   revision: number
   changedAt: string
   originDeviceId: string
@@ -97,6 +98,15 @@ export type SyncSnapshot = {
   outbox: EncryptedMutation[]
   attachments: Record<string, AttachmentUpload>
   pendingDeletes: string[]
+  pendingLegacyImports: PendingLegacyImport[]
+  legacyHasMore: boolean
+}
+
+export type PendingLegacyImport = {
+  migrationId: string
+  targetDate: string
+  legacyRevision: number
+  entry: unknown
 }
 
 export interface SyncStore {
@@ -112,7 +122,15 @@ const decoder = new TextDecoder()
 const PLACEHOLDER_OPERATION_ID = '00000000-0000-4000-8000-000000000000'
 
 export function emptySyncSnapshot(): SyncSnapshot {
-  return { cursor: null, records: {}, outbox: [], attachments: {}, pendingDeletes: [] }
+  return {
+    cursor: null,
+    records: {},
+    outbox: [],
+    attachments: {},
+    pendingDeletes: [],
+    pendingLegacyImports: [],
+    legacyHasMore: false,
+  }
 }
 
 function clone<T>(value: T): T {
@@ -200,7 +218,9 @@ export function parseRootKey(value: string): RootKeyBundle | null {
 
 export async function encryptMutation(
   root: RootKeyBundle,
-  input: Pick<EncryptedMutation, 'opId' | 'entityId' | 'baseRevision' | 'operation'>,
+  input: Pick<EncryptedMutation, 'opId' | 'entityId' | 'baseRevision' | 'operation'> & {
+    migrationIds?: string[]
+  },
   payload: unknown,
 ): Promise<EncryptedMutation> {
   const mutation: EncryptedMutation = {
@@ -212,6 +232,7 @@ export async function encryptMutation(
     nonce: null,
     aadHash: '',
     objects: [],
+    migrationIds: [...(input.migrationIds ?? [])],
   }
   const aad = stableJson(mutationAad(mutation))
   mutation.aadHash = await sha256(aad)
@@ -343,6 +364,7 @@ export function mutationFromRecord(entityId: string, record: SyncRecord): Encryp
     nonce: record.nonce,
     aadHash: record.aadHash,
     objects: clone(record.objects),
+    migrationIds: [],
   }
 }
 
@@ -391,6 +413,9 @@ export class JournalEncryptedSync {
     changedAt = new Date().toISOString(),
   ): Promise<void> {
     const state = clone(await this.store.read())
+    state.pendingLegacyImports ??= []
+    state.legacyHasMore ??= false
+    mutation = { ...mutation, migrationIds: [...(mutation.migrationIds ?? [])] }
     if (state.outbox.some((item) => item.opId === mutation.opId)) throw new Error('duplicate_op_id')
     if (
       mutation.objects.length !== attachments.length ||
@@ -420,6 +445,8 @@ export class JournalEncryptedSync {
 
   async markAttachmentUploaded(objectKey: string): Promise<void> {
     const state = clone(await this.store.read())
+    state.pendingLegacyImports ??= []
+    state.legacyHasMore ??= false
     const attachment = state.attachments[objectKey]
     if (!attachment) throw new Error('attachment_missing')
     attachment.uploaded = true
@@ -439,13 +466,28 @@ export class JournalEncryptedSync {
     changes: EncryptedChange[],
     nextCursor: string,
     downloadedAttachments: AttachmentUpload[] = [],
+    legacyImports: PendingLegacyImport[] = [],
+    legacyHasMore = false,
   ): Promise<void> {
     if (!/^c[0-9a-z]+$/.test(nextCursor)) throw new Error('invalid_cursor')
     const state = clone(await this.store.read())
-    const queuedById = new Map(state.outbox.map((mutation) => [mutation.opId, mutation]))
+    state.pendingLegacyImports ??= []
+    state.legacyHasMore ??= false
+    const queuedById = new Map(state.outbox.map((mutation) => [
+      mutation.opId,
+      { ...mutation, migrationIds: [...(mutation.migrationIds ?? [])] },
+    ]))
     for (const attachment of downloadedAttachments) {
       state.attachments[attachment.ref.objectKey] = { ...clone(attachment), uploaded: true }
     }
+    const pendingMigrationIds = new Set(state.pendingLegacyImports.map((item) => item.migrationId))
+    for (const legacyImport of legacyImports) {
+      if (!pendingMigrationIds.has(legacyImport.migrationId)) {
+        state.pendingLegacyImports.push(clone(legacyImport))
+        pendingMigrationIds.add(legacyImport.migrationId)
+      }
+    }
+    state.legacyHasMore = legacyHasMore
 
     const completedConflicts = new Set<string>()
     for (const conflict of conflicts) {
@@ -501,6 +543,7 @@ export class JournalEncryptedSync {
             nonce: change.nonce,
             aadHash: change.aadHash,
             objects: clone(change.objects),
+            migrationIds: [],
           },
         }
         if (!current.conflicts.some(
@@ -513,6 +556,7 @@ export class JournalEncryptedSync {
     }
 
     const acknowledgedIds = new Set<string>()
+    const completedMigrationIds = new Set<string>()
     for (const acknowledgement of acknowledged) {
       const queued = queuedById.get(acknowledgement.opId)
       if (
@@ -525,6 +569,12 @@ export class JournalEncryptedSync {
         throw new Error('unexpected_acknowledgement')
       }
       acknowledgedIds.add(acknowledgement.opId)
+      for (const migrationId of queued.migrationIds) completedMigrationIds.add(migrationId)
+    }
+    for (const operationId of completedConflicts) {
+      for (const migrationId of queuedById.get(operationId)?.migrationIds ?? []) {
+        completedMigrationIds.add(migrationId)
+      }
     }
     const acknowledgedDeletes = new Set(
       acknowledged.filter((item) => item.operation === 'delete').map((item) => item.entityId),
@@ -532,6 +582,9 @@ export class JournalEncryptedSync {
     state.pendingDeletes = state.pendingDeletes.filter((entityId) => !acknowledgedDeletes.has(entityId))
     state.outbox = state.outbox.filter(
       (item) => !acknowledgedIds.has(item.opId) && !completedConflicts.has(item.opId),
+    )
+    state.pendingLegacyImports = state.pendingLegacyImports.filter(
+      (item) => !completedMigrationIds.has(item.migrationId),
     )
     const retainedObjects = new Set<string>()
     for (const record of Object.values(state.records)) {
