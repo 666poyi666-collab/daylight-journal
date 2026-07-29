@@ -56,8 +56,8 @@ npx cap copy android
 ./android/gradlew.bat -p android assembleStaging
 ```
 
-staging 包只用于验收；完成后清除构建变量并重新执行默认 build/copy，不能把
-staging 资源当作 production APK 发布。
+staging 包以“拾光 Staging”独立显示，只用于验收；完成后清除构建变量并重新执行
+默认 build/copy，不能把 staging 资源当作 production APK 发布。
 
 ## Android 安装包
 
