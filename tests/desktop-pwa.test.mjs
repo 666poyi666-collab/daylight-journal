@@ -7,6 +7,17 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import test from 'node:test'
 
+const installerPath = path.resolve('desktop/install-pwa.ps1')
+
+test('desktop installer creates a persistent standalone Edge app shortcut', async () => {
+  const installer = await fs.readFile(installerPath, 'utf8')
+  assert.match(installer, /GetFolderPath\('Programs'\)/)
+  assert.match(installer, /'拾光\.lnk'/)
+  assert.match(installer, /--app=/)
+  assert.match(installer, /--user-data-dir=/)
+  assert.match(installer, /GetFolderPath\('Startup'\)/)
+})
+
 async function freePort() {
   const server = net.createServer()
   await new Promise((resolve, reject) => {

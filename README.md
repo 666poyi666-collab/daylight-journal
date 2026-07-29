@@ -86,7 +86,8 @@ MCP 接口：`http://127.0.0.1:8780/mcp`
 Windows 安装服务同时在 `http://127.0.0.1:8780/` 提供当前 `dist` 的可安装 PWA；
 它与 MCP 共用进程但不共用正文 API 凭据，8781 仍只处理附件密文。
 非管理员安装可执行 `desktop/install-pwa.ps1`，使用当前用户的登录启动项在
-`http://127.0.0.1:8782/` 持久提供同一构建，再由 Edge 安装为独立 PWA。
+`http://127.0.0.1:8782/` 持久提供同一构建，并创建无浏览器工具栏的“拾光”
+Edge App 开始菜单入口。
 
 ChatGPT 通过项目独立的 `PoyiJournalTunnel` 访问 MCP。Tunnel 是只出站的 Secure MCP
 Tunnel，MCP 不直接暴露公网，也不依赖 PersonalMcpGateway。安装、密钥和验收流程见

@@ -36,6 +36,20 @@ $shortcut.WindowStyle = 7
 $shortcut.Description = 'Poyi Journal installed PWA loopback host'
 $shortcut.Save()
 
+$edge = @(
+    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $edge) { throw 'Microsoft Edge was not found.' }
+$programsDir = [Environment]::GetFolderPath('Programs')
+$appShortcut = Join-Path $programsDir '拾光.lnk'
+$app = $shell.CreateShortcut($appShortcut)
+$app.TargetPath = $edge
+$app.Arguments = "--app=`"http://127.0.0.1:8782/`" --user-data-dir=`"$(Join-Path $resolvedInstall 'EdgeProfile')`" --no-first-run --no-default-browser-check"
+$app.WorkingDirectory = $resolvedInstall
+$app.Description = '拾光 · 日记复盘'
+$app.Save()
+
 Start-Process -FilePath $node -ArgumentList @($entryPoint) `
     -WorkingDirectory $resolvedInstall -WindowStyle Hidden
 
@@ -53,4 +67,4 @@ if ($null -eq $response -or $response.StatusCode -ne 200) {
     throw 'Journal PWA loopback host did not start.'
 }
 
-Write-Host "Installed Journal PWA host in $resolvedInstall" -ForegroundColor Green
+Write-Host "Installed Journal PWA host and app shortcut in $resolvedInstall" -ForegroundColor Green
