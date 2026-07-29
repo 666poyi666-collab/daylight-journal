@@ -47,6 +47,18 @@ npx cap copy android
 ./android/gradlew.bat -p android assembleDebug
 ```
 
+真机 staging 验收使用独立包名与存储沙箱，避免读取或覆盖正式 Journal 数据：
+
+```powershell
+$env:VITE_JOURNAL_API_URL = 'https://<journal-staging-worker>'
+npm run build
+npx cap copy android
+./android/gradlew.bat -p android assembleStaging
+```
+
+staging 包只用于验收；完成后清除构建变量并重新执行默认 build/copy，不能把
+staging 资源当作 production APK 发布。
+
 ## Android 安装包
 
 测试版 APK 在 [GitHub Releases](https://github.com/666poyi666-collab/daylight-journal/releases)
