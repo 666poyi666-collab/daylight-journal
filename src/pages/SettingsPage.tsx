@@ -6,8 +6,10 @@ import {
   Download,
   FileText,
   KeyRound,
+  LockKeyhole,
   Network,
   Save,
+  Type,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import type { JournalEntry } from '../journal/model.ts'
@@ -15,7 +17,199 @@ import { normalizePeerAttachmentUrl } from '../journal/peer-attachment-sync.ts'
 import type { StorageIssue } from '../journal/storage.ts'
 import type { SyncState } from '../journal/status.ts'
 
-type SettingsPageProps = {
+type LockSectionProps = {
+  lockEnabled: boolean
+  onEnableLock: (
+    pin: string,
+  ) => Promise<'ok' | 'invalid' | 'unsupported' | 'storage'>
+  onDisableLock: (pin: string) => Promise<boolean>
+  onChangeLock: (
+    currentPin: string,
+    nextPin: string,
+  ) => Promise<'ok' | 'wrong' | 'invalid' | 'unsupported' | 'storage'>
+}
+
+/** 应用锁设置：开启、修改、关闭都在这一块完成，反馈就地显示。 */
+function LockSection({
+  lockEnabled,
+  onEnableLock,
+  onDisableLock,
+  onChangeLock,
+}: LockSectionProps) {
+  const [pinA, setPinA] = useState('')
+  const [pinB, setPinB] = useState('')
+  const [currentPin, setCurrentPin] = useState('')
+  const [nextPin, setNextPin] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  function report(result: 'ok' | 'invalid' | 'unsupported' | 'storage' | 'wrong', okText: string) {
+    setMessage(
+      result === 'ok'
+        ? okText
+        : result === 'invalid'
+          ? '密码需要是 4–6 位数字。'
+          : result === 'wrong'
+            ? '当前密码不正确。'
+            : result === 'unsupported'
+              ? '当前环境不支持安全加密，无法开启应用锁。'
+              : '本地存储写入失败，请检查存储空间。',
+    )
+  }
+
+  async function enable() {
+    if (busy) return
+    if (pinA !== pinB) {
+      setMessage('两次输入的密码不一致。')
+      return
+    }
+    setBusy(true)
+    const result = await onEnableLock(pinA)
+    setBusy(false)
+    report(result, '应用锁已开启，下次打开需要输入密码。')
+    if (result === 'ok') {
+      setPinA('')
+      setPinB('')
+    }
+  }
+
+  async function change() {
+    if (busy) return
+    setBusy(true)
+    const result = await onChangeLock(currentPin, nextPin)
+    setBusy(false)
+    report(result, '密码已更新。')
+    if (result === 'ok') {
+      setCurrentPin('')
+      setNextPin('')
+    }
+  }
+
+  async function disable() {
+    if (busy) return
+    setBusy(true)
+    const ok = await onDisableLock(currentPin)
+    setBusy(false)
+    setMessage(ok ? '应用锁已关闭。' : '当前密码不正确。')
+    if (ok) setCurrentPin('')
+  }
+
+  return (
+    <section>
+      <div className="settings-icon">
+        <LockKeyhole />
+      </div>
+      <div>
+        <div className="settings-title-row">
+          <h3>应用锁</h3>
+          <span className={`connection-pill ${lockEnabled ? 'synced' : ''}`}>
+            <i />
+            {lockEnabled ? '已开启' : '未开启'}
+          </span>
+        </div>
+        {lockEnabled ? (
+          <>
+            <p>
+              修改或关闭需要验证当前密码。密码只保存在本机，忘记密码只能清除
+              应用数据；已同步的日记仍保存在同步服务中。
+            </p>
+            <div className="settings-fields">
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                value={currentPin}
+                onChange={(event) => {
+                  setCurrentPin(event.target.value.replace(/\D/g, ''))
+                  setMessage('')
+                }}
+                placeholder="当前密码"
+                aria-label="当前应用锁密码"
+              />
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                value={nextPin}
+                onChange={(event) => {
+                  setNextPin(event.target.value.replace(/\D/g, ''))
+                  setMessage('')
+                }}
+                placeholder="新密码（修改时填写）"
+                aria-label="新的应用锁密码"
+              />
+            </div>
+            <div className="settings-actions-row">
+              <button
+                className="secondary-button"
+                onClick={() => void change()}
+                disabled={busy || !currentPin || !nextPin}
+              >
+                修改密码
+              </button>
+              <button
+                className="secondary-button is-danger"
+                onClick={() => void disable()}
+                disabled={busy || !currentPin}
+              >
+                关闭应用锁
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p>
+              开启后，每次打开拾光需要输入 4–6 位数字密码，防止别人随手翻看。
+              这是一道进入门，日记数据本身仍以本地明文保存并参与同步。
+            </p>
+            <div className="settings-fields">
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                value={pinA}
+                onChange={(event) => {
+                  setPinA(event.target.value.replace(/\D/g, ''))
+                  setMessage('')
+                }}
+                placeholder="设置 4–6 位数字密码"
+                aria-label="设置应用锁密码"
+              />
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={6}
+                value={pinB}
+                onChange={(event) => {
+                  setPinB(event.target.value.replace(/\D/g, ''))
+                  setMessage('')
+                }}
+                placeholder="再输入一次"
+                aria-label="确认应用锁密码"
+              />
+            </div>
+            <button
+              className="secondary-button"
+              onClick={() => void enable()}
+              disabled={busy || pinA.length < 4 || pinB.length < 4}
+            >
+              开启应用锁
+            </button>
+          </>
+        )}
+        {message && <small role="status">{message}</small>}
+      </div>
+    </section>
+  )
+}
+
+type SettingsPageProps = LockSectionProps & {
+  writeFont: 'serif' | 'sans'
+  onWriteFont: (value: 'serif' | 'sans') => void
   chatGptUrl: string
   defaultChatGptUrl: string
   journalApiUrl: string
@@ -35,6 +229,12 @@ type SettingsPageProps = {
 }
 
 export function SettingsPage({
+  writeFont,
+  onWriteFont,
+  lockEnabled,
+  onEnableLock,
+  onDisableLock,
+  onChangeLock,
   chatGptUrl,
   defaultChatGptUrl,
   journalApiUrl,
@@ -352,6 +552,44 @@ export function SettingsPage({
             </button>
           </div>
         </section>
+        <section>
+          <div className="settings-icon">
+            <Type />
+          </div>
+          <div>
+            <h3>书写字体</h3>
+            <p>
+              正文即书：默认用衬线体书写与回看，中文衬线已随应用打包，
+              手机上同样生效。
+            </p>
+            <div className="font-choice-row" role="radiogroup" aria-label="书写字体">
+              <button
+                className={`font-choice is-serif ${writeFont === 'serif' ? 'active' : ''}`}
+                role="radio"
+                aria-checked={writeFont === 'serif'}
+                onClick={() => onWriteFont('serif')}
+              >
+                <strong>今日，拾光。</strong>
+                <small>衬线 · 像一本书</small>
+              </button>
+              <button
+                className={`font-choice is-sans ${writeFont === 'sans' ? 'active' : ''}`}
+                role="radio"
+                aria-checked={writeFont === 'sans'}
+                onClick={() => onWriteFont('sans')}
+              >
+                <strong>今日，拾光。</strong>
+                <small>黑体 · 像一张便签</small>
+              </button>
+            </div>
+          </div>
+        </section>
+        <LockSection
+          lockEnabled={lockEnabled}
+          onEnableLock={onEnableLock}
+          onDisableLock={onDisableLock}
+          onChangeLock={onChangeLock}
+        />
         <section>
           <div className="settings-icon">
             <Archive />

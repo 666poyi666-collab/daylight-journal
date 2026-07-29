@@ -30,6 +30,7 @@ import {
   hasEntryContent,
   hasReviewableText,
   journalBlocksToContent,
+  journalPreviewText,
   type JournalBlock,
   type JournalEntry,
   type JournalTextColor,
@@ -38,6 +39,17 @@ import {
 import { resizeJournalImage } from '../journal/image.ts'
 import { journalMoods } from '../journal/moods.ts'
 import type { SaveState, SyncState } from '../journal/status.ts'
+
+/** 今天的时段词：让日期区带一点此刻的空气感。 */
+function timePhase(): string {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 9) return '清晨'
+  if (hour < 12) return '上午'
+  if (hour < 17) return '午后'
+  if (hour < 20) return '傍晚'
+  if (hour < 23) return '夜里'
+  return '深夜'
+}
 
 function growTextarea(element: HTMLTextAreaElement) {
   if (element.scrollHeight > element.clientHeight) {
@@ -450,7 +462,7 @@ export function EditorPage({
     return (
       <section className={`${compact ? 'entry-meta-compact' : 'side-card mood-card'}`}>
         <div className="card-title">
-          <span>今天感觉如何？</span>
+          <span>{compact ? '心情' : '今天感觉如何？'}</span>
           <small>{compact ? '可选' : '选择最接近的心情'}</small>
         </div>
         <div className="mood-row">
@@ -529,6 +541,11 @@ export function EditorPage({
   return (
     <div className={`editor-layout ${focusMode ? "focus-mode" : ""}`}>
       <section className="writing-column">
+        <div className="page-sheet">
+        <span className="date-folio" aria-hidden="true">
+          {format(parseISO(selectedDate), 'd')}
+        </span>
+        <span className="page-ribbon" aria-hidden="true" />
         <div className="date-heading">
           <div>
             <p>{format(parseISO(selectedDate), "EEEE", { locale: zhCN })}</p>
@@ -538,7 +555,7 @@ export function EditorPage({
             <div className="date-subline">
               <span>
                 {format(parseISO(selectedDate), "yyyy年")} ·{" "}
-                {selectedDate === todayKey ? "今天" : "往日记录"}
+                {selectedDate === todayKey ? `今天 · ${timePhase()}` : "往日记录"}
               </span>
               <i className={hasEntry ? "recorded" : ""}>
                 {hasEntry ? "已记录" : "新的一页"}
@@ -558,12 +575,6 @@ export function EditorPage({
             >
               <ChevronLeft />
             </button>
-            <div
-              className={`weather-glyph ${selectedDate === todayKey ? "is-today" : "is-past"}`}
-            >
-              <span className="ambient-orb" aria-hidden="true" />
-              <small>{selectedDate === todayKey ? "慢慢写" : "回看这天"}</small>
-            </div>
             <button
               onClick={() => onChangeDate(1)}
               aria-label="后一天"
@@ -744,7 +755,7 @@ export function EditorPage({
                 }}
                 aria-label={index === 0 ? '日记正文' : `日记正文第 ${index + 1} 段`}
                 placeholder={index === 0
-                  ? '此刻，你想记住什么？\n\n不必完整，也不用完美。写下发生的事、当时的感受，或者一个还没有答案的问题。'
+                  ? '此刻，你想记住什么？不必完整，也不用完美。'
                   : '继续写下这个时刻……'}
                 />
               ) : (
@@ -825,6 +836,7 @@ export function EditorPage({
             </div>,
             document.body,
           )}
+        </div>
       </section>
 
       <aside className="insight-column">
@@ -855,7 +867,8 @@ export function EditorPage({
                   <span>
                     <strong>{memory.title || '那一天的片段'}</strong>
                     <small>
-                      {memory.content.slice(0, 42) || '这一天留下了一张照片。'}
+                      {journalPreviewText(memory.content).slice(0, 42) ||
+                        '这一天留下了一张照片。'}
                     </small>
                   </span>
                   <ArrowUpRight />

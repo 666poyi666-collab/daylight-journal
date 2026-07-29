@@ -2,12 +2,14 @@
 
 拾光是一个面向个人使用的跨端日记工作台：网页、Android 手机和平板共用一套日记数据，并通过 MCP 让 ChatGPT 在「日记」项目中完成复盘。
 
-当前阶段优先保证三件事：记录足够顺手、跨端同步可靠、AI 读取路径清晰。前端已完成 Editorial Paper 视觉重构，设计与响应式约束见 [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)。
+当前阶段优先保证三件事：记录足够顺手、跨端同步可靠、AI 读取路径清晰。前端视觉为 Ink & Daylight（暖纸墨色 + 单一赭金强调色 + 发丝线分层），设计与响应式约束见 [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)。
 
 ## 当前能力
 
 - 今日记录、历史记录、日历、标题、可排序记录片、分次写作时间、心情和标签
 - 自动保存到本地 localStorage
+- 可选应用锁：4–6 位数字密码本机哈希存储，防翻看；不加密数据、不上传密码
+- 书写字体可选衬线/黑体：衬线为默认，中文衬线子集随应用打包，手机离线同样生效
 - 手机、平板、网页通过同步服务合并日记
 - ChatGPT 自定义连接器「拾光日记」
 - 独立 Journal MCP：7 个 `journal_*` 工具和按日期读取完整正文的 Resource
@@ -97,7 +99,7 @@ Tunnel，MCP 不直接暴露公网，也不依赖 PersonalMcpGateway。安装、
 - [`docs/AI-CODING-GUIDE.md`](docs/AI-CODING-GUIDE.md)：AI coding 工作流、日志和验收规则
 - [`docs/BUGS.md`](docs/BUGS.md)：已知问题、修复记录与 Bug 模板
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md)：按版本维护的开发变更日志
-- [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)：Soft Tech 视觉方向与前端重构约束
+- [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)：Ink & Daylight 视觉方向与响应式约束
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)：阶段计划与暂不做事项
 
 ## 目录约定

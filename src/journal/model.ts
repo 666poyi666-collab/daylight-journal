@@ -131,6 +131,17 @@ function parseJournalBlock(value: unknown): JournalBlock | null {
 }
 
 /** Build the legacy plain-text mirror used by search, export and older clients. */
+/**
+ * 把正文压成一行摘要：去掉记录片之间的 `---` 分隔符和多余空白。
+ * 只用于列表和卡片预览，不改变存储与同步用的正文本身。
+ */
+export function journalPreviewText(content: string): string {
+  return content
+    .replace(/^[ \t]*-{3,}[ \t]*$/gm, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function journalBlocksToContent(blocks: JournalBlock[]): string {
   return blocks
     .filter((block) => Boolean(block.content.trim()))

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import {
   CalendarRange,
   Check,
@@ -16,6 +17,7 @@ import {
   addMonths,
   addDays,
   format,
+  getDayOfYear,
   parseISO,
   startOfMonth,
   subMonths,
@@ -27,12 +29,23 @@ import { useTodayKey } from './hooks/useTodayKey.ts'
 import { CalendarPage } from './pages/CalendarPage.tsx'
 import { EditorPage } from './pages/EditorPage.tsx'
 import { HistoryPage } from './pages/HistoryPage.tsx'
+import { LockScreen } from './pages/LockScreen.tsx'
 import { SettingsPage } from './pages/SettingsPage.tsx'
+import {
+  LOCK_STORAGE_KEY,
+  createLockRecord,
+  decodeLockRecord,
+  isLockSupported,
+  isPinFormat,
+  verifyPin,
+  type LockRecord,
+} from './journal/lock.ts'
 import {
   applyEntryPatch,
   emptyEntry,
   hasEntryContent,
   hasReviewableText,
+  journalPreviewText,
   type JournalEntries,
   type JournalEntry,
 } from './journal/model.ts'
@@ -67,7 +80,7 @@ import {
   PEER_ATTACHMENT_URL_STORAGE_KEY,
   normalizePeerAttachmentUrl,
 } from './journal/peer-attachment-sync.ts'
-import './editorial-ui.css'
+import './journal-ui.css'
 
 type View = 'today' | 'calendar' | 'history' | 'settings'
 
@@ -84,6 +97,17 @@ const DEFAULT_JOURNAL_API =
 const CHATGPT_PROJECT_URL =
   import.meta.env.VITE_CHATGPT_PROJECT_URL || 'https://chatgpt.com/'
 const SPLASH_SESSION_KEY = 'daylight-splash-seen'
+const RELOCK_GRACE_MS = 30_000
+
+/* 开屏语按日轮换：小小的个性，不需要任何配置。 */
+const splashQuotes = [
+  '记录此刻，看见自己',
+  '写下来，就是对时间温柔的抵抗',
+  '一天很短，一段话刚刚好',
+  '诚实一点，今天值得被看见',
+  '慢慢写，光会落在纸上',
+  '今天的一小段，是未来的一整页',
+]
 
 function safeHttpUrl(value: string): string | null {
   try {
@@ -123,7 +147,7 @@ interface ViewScrollPosition {
 function App() {
   const todayKey = useTodayKey()
   const compactNavigation = useMediaQuery(
-    '(max-width: 699px), (orientation: landscape) and (max-width: 820px)',
+    '(max-width: 699px), (orientation: landscape) and (max-width: 820px), (orientation: landscape) and (max-height: 520px)',
   )
   const [initialLoad] = useState(loadJournalEntries)
   const [view, setView] = useState<View>('today')
@@ -141,6 +165,15 @@ function App() {
   })
   const [dark, setDark] = useState(
     () => readStorageValue('daylight-theme') === 'dark',
+  )
+  const [writeFont, setWriteFont] = useState<'serif' | 'sans'>(() =>
+    readStorageValue('daylight-write-font') === 'sans' ? 'sans' : 'serif',
+  )
+  const [lockRecord, setLockRecord] = useState<LockRecord | null>(() =>
+    decodeLockRecord(readStorageValue(LOCK_STORAGE_KEY)),
+  )
+  const [locked, setLocked] = useState(() =>
+    Boolean(decodeLockRecord(readStorageValue(LOCK_STORAGE_KEY))),
   )
   const [saveState, setSaveState] = useState<SaveState>(
     initialLoad.issue ? 'error' : 'saved',
@@ -196,6 +229,9 @@ function App() {
   const previousTodayRef = useRef(todayKey)
   const scrollPositionsRef = useRef(new Map<View, ViewScrollPosition>())
   const pendingScrollRestoreRef = useRef<{ view: View; reset: boolean } | null>(null)
+  const hiddenAtRef = useRef(0)
+  const lockRecordRef = useRef(lockRecord)
+  lockRecordRef.current = lockRecord
 
   const entry = entries[selectedDate] || emptyEntry(selectedDate)
   const hasCurrentEntry = hasEntryContent(entry)
@@ -229,7 +265,7 @@ function App() {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const timer = window.setTimeout(
       () => setSplashVisible(false),
-      reduceMotion ? 140 : 1080,
+      reduceMotion ? 140 : 1260,
     )
     return () => window.clearTimeout(timer)
   }, [splashVisible])
@@ -281,8 +317,91 @@ function App() {
     writeStorageValue('daylight-theme', dark ? 'dark' : 'light')
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', dark ? '#111813' : '#526f5c')
+      ?.setAttribute('content', dark ? '#131211' : '#f7f4ed')
   }, [dark]);
+
+  useEffect(() => {
+    document.documentElement.dataset.writeFont = writeFont
+    writeStorageValue('daylight-write-font', writeFont)
+  }, [writeFont])
+
+  /** 主题切换用 View Transitions 做一次整页交叉淡化；不支持或减少动效时直接切。 */
+  const toggleDark = useCallback(() => {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!document.startViewTransition || reduceMotion) {
+      setDark((value) => !value)
+      return
+    }
+    document.startViewTransition(() => {
+      flushSync(() => setDark((value) => !value))
+    })
+  }, [])
+
+  /* 应用锁：切到后台超过宽限期，回来时重新锁定。 */
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (!lockRecordRef.current) return
+      if (document.visibilityState === 'hidden') {
+        hiddenAtRef.current = Date.now()
+        return
+      }
+      if (
+        hiddenAtRef.current &&
+        Date.now() - hiddenAtRef.current > RELOCK_GRACE_MS
+      ) {
+        setLocked(true)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () =>
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [])
+
+  const enableLock = useCallback(
+    async (pin: string): Promise<'ok' | 'invalid' | 'unsupported' | 'storage'> => {
+      if (!isPinFormat(pin)) return 'invalid'
+      if (!isLockSupported()) return 'unsupported'
+      const record = await createLockRecord(pin)
+      const result = writeStorageValue(LOCK_STORAGE_KEY, JSON.stringify(record))
+      if (!result.ok) {
+        setStorageIssue(result.issue)
+        return 'storage'
+      }
+      setLockRecord(record)
+      return 'ok'
+    },
+    [],
+  )
+
+  const disableLock = useCallback(
+    async (pin: string): Promise<boolean> => {
+      const record = lockRecordRef.current
+      if (!record) return true
+      if (!(await verifyPin(record, pin))) return false
+      try {
+        localStorage.removeItem(LOCK_STORAGE_KEY)
+      } catch {
+        // 移除失败时保持已解锁状态即可；下次启动仍会要求密码。
+      }
+      setLockRecord(null)
+      setLocked(false)
+      return true
+    },
+    [],
+  )
+
+  const changeLock = useCallback(
+    async (
+      currentPin: string,
+      nextPin: string,
+    ): Promise<'ok' | 'wrong' | 'invalid' | 'unsupported' | 'storage'> => {
+      const record = lockRecordRef.current
+      if (!record) return 'wrong'
+      if (!(await verifyPin(record, currentPin))) return 'wrong'
+      return enableLock(nextPin)
+    },
+    [enableLock],
+  )
 
   const persistSnapshot = useCallback((snapshot: JournalEntries) => {
     if (recoveryRawRef.current) {
@@ -752,25 +871,38 @@ function App() {
     return { currentMonthCount, totalWordCount, currentStreak }
   }, [entries, sortedEntries, todayKey])
 
+  const splash = splashVisible && (
+    <button
+      className="product-splash"
+      type="button"
+      onClick={() => setSplashVisible(false)}
+      aria-label="跳过启动动画"
+    >
+      <span className="product-splash-mark" aria-hidden="true">
+        <img src="/icon-journal-sunrise.png" alt="" />
+        <i />
+      </span>
+      <strong>拾光</strong>
+      <small>DAYLIGHT JOURNAL</small>
+      <span className="product-splash-line" aria-hidden="true"><i /></span>
+      <em>{splashQuotes[getDayOfYear(new Date()) % splashQuotes.length]}</em>
+    </button>
+  )
+
+  if (lockRecord && locked) {
+    return (
+      <>
+        <i className="paper-grain" aria-hidden="true" />
+        {splash}
+        <LockScreen record={lockRecord} onUnlock={() => setLocked(false)} />
+      </>
+    )
+  }
+
   return (
     <>
-      {splashVisible && (
-        <button
-          className="product-splash"
-          type="button"
-          onClick={() => setSplashVisible(false)}
-          aria-label="跳过启动动画"
-        >
-          <span className="product-splash-mark" aria-hidden="true">
-            <img src="/icon-journal-sunrise.png" alt="" />
-            <i />
-          </span>
-          <strong>拾光</strong>
-          <small>DAYLIGHT JOURNAL</small>
-          <span className="product-splash-line" aria-hidden="true"><i /></span>
-          <em>记录此刻，看见自己</em>
-        </button>
-      )}
+      <i className="paper-grain" aria-hidden="true" />
+      {splash}
       <div className="app-shell">
         <aside
           ref={sidebarRef}
@@ -854,15 +986,16 @@ function App() {
                 className={
                   item.date === selectedDate && view === "today" ? "active" : ""
                 }
+                title={journalPreviewText(item.content).slice(0, 40) || undefined}
               >
-                <span className="recent-dot" />
-                <span>
-                  <strong>
-                    {item.title ||
-                      format(parseISO(item.date), "M月d日", { locale: zhCN })}
-                  </strong>
-                  <small>{item.content.slice(0, 18) || "一篇安静的记录"}</small>
-                </span>
+                <strong>
+                  {item.title ||
+                    format(parseISO(item.date), "M月d日", { locale: zhCN })}
+                </strong>
+                <i className="toc-leader" aria-hidden="true" />
+                <time dateTime={item.date}>
+                  {format(parseISO(item.date), "M/d")}
+                </time>
               </button>
             ))}
             {sortedEntries.length === 0 && (
@@ -882,7 +1015,7 @@ function App() {
               设置
             </button>
             <button
-              onClick={() => setDark((value) => !value)}
+              onClick={toggleDark}
               aria-label={dark ? '切换到浅色模式' : '切换到深色模式'}
               aria-pressed={dark}
             >
@@ -959,7 +1092,7 @@ function App() {
             <div className="topbar-actions">
               <button
                 className="icon-button"
-                onClick={() => setDark((value) => !value)}
+                onClick={toggleDark}
                 aria-label={dark ? '切换到浅色模式' : '切换到深色模式'}
                 aria-pressed={dark}
               >
@@ -1050,6 +1183,12 @@ function App() {
             )}
             {view === "settings" && (
               <SettingsPage
+                writeFont={writeFont}
+                onWriteFont={setWriteFont}
+                lockEnabled={Boolean(lockRecord)}
+                onEnableLock={enableLock}
+                onDisableLock={disableLock}
+                onChangeLock={changeLock}
                 chatGptUrl={chatGptUrl}
                 defaultChatGptUrl={CHATGPT_PROJECT_URL}
                 journalApiUrl={journalApiUrl}

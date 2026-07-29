@@ -32,7 +32,7 @@ React/Vite/Capacitor
 - `src/journal/review.ts`：生成只读、深度且包含长期模式对照的 ChatGPT 复盘提示词
 - `src/hooks/useTodayKey.ts`、`src/hooks/useMediaQuery.ts`：跨午夜日期刷新与响应式无障碍状态
 - `tests/`：Node 数据层测试与拦截真实同步请求的 Playwright 浏览器回归
-- `src/index.css`：全局基础与兼容 token；`src/editorial-ui.css`：当前唯一组件样式入口，负责 Editorial Paper 视觉、三栏独立滚动和多端布局；旧样式文件仅保留为历史参考，不进入运行时级联
+- `src/index.css`：设计 token 与元素基线；`src/journal-ui.css`：唯一组件样式层，负责 Ink & Daylight 视觉、三区独立滚动和四档响应式布局；历史样式文件已删除，不要再新增并行样式层
 - `journal-store.mjs`：Journal 数据、整数 revision、原子写入和持久化幂等重放
 - `journal-api.mjs`：带随机 Bearer 令牌的版本化 `/v1` API
 - `peer-attachment-store.mjs`、`peer-attachment-api.mjs`：8781 专用的密文附件 authority 与严格 V1 合同

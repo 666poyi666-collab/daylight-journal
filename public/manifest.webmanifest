@@ -4,8 +4,8 @@
   "description": "一个安静、好用的个人日记与 AI 复盘应用。",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f4f4ef",
-  "theme_color": "#526f5c",
+  "background_color": "#f7f4ed",
+  "theme_color": "#f7f4ed",
   "lang": "zh-CN",
   "icons": [
     {
