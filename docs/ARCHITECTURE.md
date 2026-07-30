@@ -25,6 +25,9 @@ React/Vite/Capacitor
 ChatGPT → Journal Cloud OAuth MCP → D1 `journal_mcp_entries`（电脑关机仍可读）
 ```
 
+production 已完成旧数据 encrypted-only cutover 和 ChatGPT 四工具/Resource 实测；PC-off
+状态复验直接命中 Cloud authority，不经过本机 8780、Tunnel 或统一 Gateway。
+
 ## 代码职责
 
 - `src/App.tsx`：应用壳、视图导航、跨页面状态组合和 ChatGPT 入口；不再直接解析或写入日记存储
@@ -109,6 +112,9 @@ type JournalBlock = {
 
 - 生产 ChatGPT 主链路是 Journal 自己的 Cloud Worker `/mcp`，只接受精确 issuer、audience、
   scope、RS256 签名并经 introspection 确认的 OAuth access token；它不依赖 Windows 在线。
+- Journal 通过 Cloudflare service binding 调 OAuth introspection 时，同时携带标准
+  `Authorization` 和仅限服务间转发的专用凭据头；OAuth 对冲突值返回 401，安全语义仍是
+  audience-bound `client_secret_basic`，不会放宽 scope、issuer 或 audience。
 - Cloud MCP 提供 `journal_get_status`、`journal_list_recent`、`journal_search`、
   `journal_get_entry` 和 `journal://entries/{date}`，只读 D1 的无附件投影。
 - 本机 `PoyiJournalMcp`/Tunnel 保留给本地维护与兼容验收，不再作为 PC-off 生产前提。

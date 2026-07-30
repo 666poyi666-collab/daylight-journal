@@ -1,5 +1,13 @@
-const CACHE_NAME = 'daylight-journal-v4'
-const APP_SHELL = ['/', '/manifest.webmanifest', '/icon-journal-sunrise.png']
+const CACHE_NAME = 'daylight-journal-v5'
+const APP_SHELL = [
+  '/',
+  '/manifest.webmanifest',
+  '/favicon.svg',
+  '/icon-journal-sunrise.png',
+  '/icon-journal-sunrise-192.png',
+  '/icon-journal-sunrise-512.png',
+  '/icon-journal-sunrise-maskable-512.png',
+]
 
 async function cacheAppShell() {
   const cache = await caches.open(CACHE_NAME)

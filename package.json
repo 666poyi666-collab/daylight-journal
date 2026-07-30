@@ -11,6 +11,7 @@
     "test:e2e": "node tests/frontend-smoke.mjs",
     "test:mcp:e2e": "node mcp/tests/e2e/deployed-smoke.mjs",
     "test:pwa": "node tests/pwa-smoke.mjs",
+    "check:governance": "node scripts/check-governance.mjs",
     "mcp": "node mcp/main.mjs",
     "edge": "node edge-bridge.mjs",
     "lint": "oxlint",

@@ -118,6 +118,25 @@ Android 15（targetSdk 35+）和 iOS 全面屏都是 edge-to-edge，`index.html`
 否则冷启动会先闪一下旧配色。当前浅色 `#F7F4ED`、`values-night` 深色 `#131211`，
 状态栏图标明暗由 `@bool/splash_light_status_bar` 跟随。
 
+### 2026-07-30 品牌图标收敛
+
+旧 1254px 图标使用高细节 3D 皮革、纸张纹理和浮雕，原图约 1.7MB；浏览器 favicon 仍是
+Vite 紫色默认标志，Android 旧 splash 还保留 Capacitor 图形。小尺寸下它们既不一致，也无法
+满足 ChatGPT 插件“PNG、至少 256px、不超过 10KB”的约束。
+
+当前统一标记固定为四个色块：棕色书脊 `#6b3f24`、象牙纸页 `#fffefb`、赭金日出
+`#a85f27`、鼠尾草书签 `#7e8764`，背景为纸色 `#f7f4ed`。轮廓只表达“日记本＋晨光＋书签”，
+禁止文字、叶片浮雕、纹理、渐变、阴影和细线；核心图形位于中央安全区，24px 仍可辨。
+
+- 矢量母版：`resources/icon-journal-sunrise.svg`；项目内预览母版为 1024px PNG。
+- PWA：48px favicon、192/512px ordinary icon 和 512px maskable icon；主界面共用 512px PNG。
+- Android：adaptive foreground 使用同构 vector drawable，legacy/round mipmap 按密度生成；
+  横竖屏 splash 使用同一标记和纸色背景。
+- ChatGPT：`resources/chatgpt-plugin-icon.png` 为 256×256、5.9KB 的上传文件。ChatGPT 当前
+  已连接 development 插件没有创建后的图标编辑入口，因此不删除或重建已验收 OAuth 连接；
+  该文件供下一次创建/换版时直接上传。
+- 图标替换必须提升 Service Worker cache namespace；本轮从 v4 提升到 v5，防止旧图回弹。
+
 ### 实现约束
 
 - 运行时样式只有两个文件：`src/index.css`（token 与元素基线）和 `src/journal-ui.css`（唯一组件层）

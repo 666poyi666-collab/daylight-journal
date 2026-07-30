@@ -15,6 +15,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run check:governance
       - run: npm run lint
       - run: npm run test:unit
       - run: npm run build

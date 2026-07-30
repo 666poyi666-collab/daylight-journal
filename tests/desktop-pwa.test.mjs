@@ -9,6 +9,14 @@ import test from 'node:test'
 
 const installerPath = path.resolve('desktop/install-pwa.ps1')
 
+function pngDimensions(buffer) {
+  assert.equal(buffer.subarray(1, 4).toString('ascii'), 'PNG')
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20),
+  }
+}
+
 test('desktop installer creates a persistent standalone Edge app shortcut', async () => {
   const installer = await fs.readFile(installerPath, 'utf8')
   assert.match(installer, /GetFolderPath\('Programs'\)/)
@@ -16,6 +24,55 @@ test('desktop installer creates a persistent standalone Edge app shortcut', asyn
   assert.match(installer, /--app=/)
   assert.match(installer, /--user-data-dir=/)
   assert.match(installer, /GetFolderPath\('Startup'\)/)
+})
+
+test('brand icons keep PWA sizes and the ChatGPT upload budget', async () => {
+  const manifest = JSON.parse(
+    await fs.readFile(path.resolve('public/manifest.webmanifest'), 'utf8'),
+  )
+  assert.deepEqual(
+    manifest.icons.map(({ src, sizes, purpose }) => ({ src, sizes, purpose })),
+    [
+      {
+        src: '/icon-journal-sunrise-192.png',
+        sizes: '192x192',
+        purpose: 'any',
+      },
+      {
+        src: '/icon-journal-sunrise-512.png',
+        sizes: '512x512',
+        purpose: 'any',
+      },
+      {
+        src: '/icon-journal-sunrise-maskable-512.png',
+        sizes: '512x512',
+        purpose: 'maskable',
+      },
+    ],
+  )
+
+  for (const [file, size] of [
+    ['public/icon-journal-sunrise-192.png', 192],
+    ['public/icon-journal-sunrise-512.png', 512],
+    ['public/icon-journal-sunrise-maskable-512.png', 512],
+  ]) {
+    const image = await fs.readFile(path.resolve(file))
+    assert.deepEqual(pngDimensions(image), { width: size, height: size })
+  }
+
+  const connectorIcon = await fs.readFile(
+    path.resolve('resources/chatgpt-plugin-icon.png'),
+  )
+  assert.deepEqual(pngDimensions(connectorIcon), { width: 256, height: 256 })
+  assert.ok(connectorIcon.byteLength <= 10 * 1024)
+
+  const favicon = await fs.readFile(path.resolve('public/favicon.svg'), 'utf8')
+  assert.match(favicon, /#6b3f24/)
+  assert.match(favicon, /#a85f27/)
+  assert.doesNotMatch(favicon, /#863bff/)
+
+  const serviceWorker = await fs.readFile(path.resolve('public/sw.js'), 'utf8')
+  assert.match(serviceWorker, /daylight-journal-v5/)
 })
 
 async function freePort() {

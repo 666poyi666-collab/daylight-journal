@@ -22,15 +22,16 @@
 | FR-007 | 单图封面 | 每篇最多一张压缩图片；无图时仍以文字为主 | 已完成 |
 | FR-008 | 日期与历史回看 | 支持日历、搜索、月份时间流和往年今日 | 已完成 |
 | FR-009 | 正文跨端云同步 | V2 同一 mutation 同步设备密文副本与无附件 MCP 可读镜像；失败不阻塞本地写作 | 已完成，存在 KR-001；设备需升级到携带 `mcpEntry` 的版本 |
-| FR-010 | AI 只读复盘 | 保存并同步当前修订后复制提示词、打开 ChatGPT；电脑关机时仍可通过 Journal Cloud OAuth MCP 读取正文和 Resource | 本地/隔离 Worker 已完成，staging 非空数据与 ChatGPT 应用待最终验收 |
+| FR-010 | AI 只读复盘 | 保存并同步当前修订后复制提示词、打开 ChatGPT；电脑关机时仍可通过 Journal Cloud OAuth MCP 读取正文和 Resource | 已完成；生产 ChatGPT 已实测四个只读工具与 embedded Resource |
 | FR-011 | Markdown 导出 | 用户可导出全部记录，正文不被 AI 自动改写 | 已完成 |
 | FR-012 | 服务配置 | 公网同步地址和 ChatGPT 项目通过构建环境显式配置，不进入公开源码 | 已完成 |
-| FR-013 | 独立 Journal MCP | Journal Cloud MCP 独立提供状态、最近、搜索、按日完整读取和 Resource；不依赖其他产品 Gateway | 已完成本地契约，待 staging 部署验收 |
+| FR-013 | 独立 Journal MCP | Journal Cloud MCP 独立提供状态、最近、搜索、按日完整读取和 Resource；不依赖其他产品 Gateway | 已完成；生产 Worker、OAuth 与 ChatGPT 工具发现/调用通过 |
 | FR-014 | 安全幂等写入 | 写操作要求 UUID `requestId`、`expectedRevision`，重复请求重放且重启后仍有效 | 已完成 |
-| FR-015 | 独立安全链路 | 生产 ChatGPT 连接 Journal Cloud OAuth MCP，不依赖统一 Gateway、其他产品或 Windows 在线 | 已完成本地契约；旧本机 Tunnel 仅保留维护用途 |
+| FR-015 | 独立安全链路 | 生产 ChatGPT 连接 Journal Cloud OAuth MCP，不依赖统一 Gateway、其他产品或 Windows 在线 | 已完成；生产链路为独立 Cloud OAuth MCP，PC-off 等价复验通过 |
 | FR-016 | 手机稳定配对 | 附件直连 API 用 mDNS、稳定 serviceId 和独立本地配对令牌发现；不复用云 device token | 本地实现，待真机验收 |
 | FR-017 | 附件只在电脑与手机直连时同步 | 云 V2 固定 `objects=[]`；附件仅可发往 localhost、`.local` 或私有网段 8781，并以独立 AAD 加密、支持 tombstone、离线 pending 与篡改/回退拒绝 | 本地实现，待双端真机验收 |
-| FR-018 | 旧云日记无损迁移 | 旧行通过认证 V2 import 回填；同日去重/合并、无日期按上海时区归日，7/7 ledger 和双投影验证前禁止删旧表 | 本地 Worker/客户端契约已完成，待 production 7/7 验收 |
+| FR-018 | 旧云日记无损迁移 | 旧行通过认证 V2 import 回填；同日去重/合并、无日期按上海时区归日，7/7 ledger 和双投影验证前禁止删旧表 | 已完成；production 7/7、双投影与 cutover 回归全部通过 |
+| FR-019 | 统一品牌图标 | PWA、favicon、Android 启动器/启动屏和 ChatGPT 插件复用同一“日记本＋晨光＋书签”标记；24px 可辨，插件 PNG 至少 256px 且不超过 10KB | 已完成；PWA/Android 真机通过，插件上传资产为 5.9KB |
 
 ## 非功能需求
 
@@ -45,6 +46,17 @@
 | NFR-007 | 数据隔离 | Journal Cloud 只保存正文类字段的可读镜像；LAN 8781 仅有认证附件密文 API；云 exchange、D1、R2、MCP 不含附件或附件存在性 |
 | NFR-008 | 凭据与日志 | 设备使用独立 `dj1`；Cloud MCP 只接受 Journal OAuth access token；日志不含正文、标题、标签、图片或令牌 |
 | NFR-009 | 后台恢复 | 两个 Windows 服务自动启动、失败重启；任一 Journal 服务异常不影响其他项目服务 |
+| NFR-010 | 迭代可追踪性 | 每次开发均有唯一迭代编号，完整记录需求、文件新增/修改/删除、Bug/风险、验证结果和遗留项；`npm run check:governance` 通过 |
+
+## 需求统计与分析
+
+截至 2026-07-30：
+
+- 功能需求：19 项；已完成 17 项，2 项已完成本地实现、仍待附件双端真机验收。
+- 非功能需求：10 项；均已建立验收口径，其中发布签名、完整跨端验收和迭代治理仍需持续执行。
+- 当前需求重心：Journal Cloud 同步、迁移和 ChatGPT PC-off 只读链路已完成 production 验收；后续只剩 FR-016、FR-017 的附件双端真机验收。
+- 主要冲突风险：KR-001 仍限制 FR-009 的多设备同日并发编辑；需求描述不得宣称已经支持 block 级无冲突合并。
+- 本轮完成：FR-019 已统一 PWA、favicon、Android 和 ChatGPT 插件上传资产，不改变产品布局。
 
 ## 明确不做
 
@@ -59,4 +71,5 @@
 2. 在 `PRODUCT.md` 确认是否属于当前阶段。
 3. 实现时更新对应架构、同步或视觉文档，并补测试。
 4. 修复缺陷时登记 `BUGS.md`；用户可感知变更登记 `CHANGELOG.md`。
-5. 合并前按 `DEVELOPMENT.md` 完成验证，不以聊天记录替代项目事实。
+5. 每次迭代在 `ITERATION-LOG.md` 记录操作清单、需求分析、Bug 变化和验证结果。
+6. 合并前执行 `npm run check:governance` 并按 `DEVELOPMENT.md` 完成验证，不以聊天记录替代项目事实。

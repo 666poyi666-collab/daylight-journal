@@ -59,6 +59,9 @@ MCP 服务提供 `GET /healthz`、`GET /readyz`、`GET /metrics`。8781 只提�
 
 - Cloud `/mcp`：只接受 RS256、`typ=at+jwt`、精确 issuer/resource/audience 的 OAuth token，
   每次请求执行 fail-closed introspection。`journal_get_status` 也只要求 `journal:read`。
+- Journal 到 OAuth 的 introspection 保持 `client_secret_basic` 语义；通过 Cloudflare service
+  binding 时同时发送标准 `Authorization` 和 `X-Poyi-Resource-Server-Authorization`。
+  OAuth 仅在两者缺一或完全一致时取值，冲突立即 401，专用头不得由公网客户端或日志生成。
 - Cloud `/sync/v2/*`：只接受可撤销 `dj1` 设备凭据；浏览器 Origin 必须精确 allowlist。
 - Cloud 管理设备：只接受仓库外 `SYNC_KEY`；它不能调用 MCP。
 
@@ -119,6 +122,7 @@ production 旧库禁止执行 `0006`。先执行 `0002`（仅尚未有这些列�
 bundle，再由两个独立 `dj1` 中任一端完成认证 migration。`/readyz.migration` 必须从
 `discovery_pending` 经过 `migrating` 到 `cutover_required`；只有 preflight 证明旧行、ledger、
 密文实体和 MCP 镜像全部一致后，才执行 `0011_legacy_cutover.sql`。任何计数不一致都中止。
+`/readyz` 必须同时核对 migration 与 OAuth；migration 未 cutover 时不能据此推断 OAuth 已就绪。
 
 本机兼容服务仍按以下方式维护：
 
@@ -200,6 +204,23 @@ Node 24 上若 Inspector 在打印成功响应后因已知上游退出断言返�
 
 真实验收证据只记录时间、工具名、状态、revision/replayed、脱敏 Tunnel 状态和截图路径。
 禁止保存正文、标题、标签、图片、token、Cookie 或完整网络日志。
+
+## 2026-07-30 production Cloud 验收
+
+- 旧记录 preflight 为 `sourceRows=7`、`discovered=7`、`completed=7`、`pending=0`；缺失密文
+  副本和 MCP 投影均为 0。执行 `0011_legacy_cutover.sql` 后旧表为 0、不完整迁移为 0，
+  cutover ledger 为 1。
+- production cutover 前完成仓外 EFS 加密备份并记录 SHA-256；路径和摘要仅留运维交接，
+  不进入客户端、Worker 或 ChatGPT。
+- OAuth `/readyz` 与 Journal `/readyz` 均为 200；Journal 报告 `oauth=ready`、
+  `migration=complete`、`storage=encrypted_replica_plus_mcp_read_model`。
+- ChatGPT 正式只读连接器以 `journal:read` 完成 OAuth exchange；刷新后发现四个工具。
+  脱敏实测 `journal_get_status`、`journal_list_recent`、`journal_search`、
+  `journal_get_entry` 全部成功，embedded Resource 已实体化并读取，内容长度大于 0。
+- 再次只调用 Cloud `journal_get_status`，返回 `journal_cloud_authoritative`、
+  `pcOffReadable=true` 和非零可读计数；链路未使用本机 8780、Journal Tunnel 或 Gateway。
+- 临时 owner credential rotation endpoint 已撤销，生产访问为 404；验收未保存正文、日期、
+  标题、标签、URI、token、Cookie 或完整 ChatGPT 会话。
 
 ## 日志规范
 

@@ -7,6 +7,9 @@
 
 ### Added
 
+- 新增统一的拾光扁平品牌图标母版，以及 PWA ordinary/maskable、favicon 和 5.9KB
+  ChatGPT 插件上传资产。
+- 建立强制迭代台账与治理校验：每次开发统一记录关联需求、文件新增/修改/删除、Bug、需求分析、验证结果和遗留项。
 - 应用锁：4–6 位数字密码，PBKDF2-SHA256（120k 次、随机盐）哈希只存本机；冷启动必锁、
   切后台超 30 秒重锁、连错 5 次冷却 30 秒。设置页可开启/修改/关闭（需验证当前密码），
   锁屏为纸面数字键盘，明确说明这是防翻看的进入门、不是数据加密，且不提供应用内找回。
@@ -24,6 +27,8 @@
 
 ### Changed
 
+- PWA、应用内品牌位、Android adaptive/legacy/round launcher 和横竖屏 splash 统一为
+  “日记本＋晨光＋书签”标记；主 PWA 图由约 1.7MB 降至约 12KB。
 - V2 同步新增 `legacyImports`/`legacyHasMore` 与 durable `migrationIds`：客户端先恢复 outbox、
   再拉取并原子保存旧行，按日期去重/合并后以每批最多 25 条回传；两设备竞争只允许一方完成 ledger。
 - staging 与 production 改为提升同一 commit 和同一构建产物；同步 endpoint 与独立 `dj1`/共享
@@ -60,6 +65,11 @@
 
 ### Fixed
 
+- 修复 favicon 仍为 Vite 默认图、Android splash 仍为 Capacitor 标志，以及 Service Worker
+  v4 缓存导致安装新版后锁屏继续显示旧 3D 图标的问题；cache namespace 已提升为 v5。
+- 修复 Cloudflare service binding 不转发标准 `Authorization` 导致生产 OAuth introspection
+  401、ChatGPT 四个 Journal 工具全部失败的问题；专用转发头保持 Basic 语义，冲突双头
+  fail-closed。production 四工具、embedded Resource 与 PC-off 等价调用已通过。
 - 修复复盘提示词保留 `journal://entries/{date}` 占位符的问题；现在复制实际所选日期 URI，
   且点击复盘仍等待当前本地 revision 完成 ACK。
 - 修复旧 7 条明文云记录缺少一次性、可重试迁移闭环的问题；migration ledger、密文实体、
@@ -98,6 +108,9 @@
 
 ### Verified
 
+- production 旧数据迁移完成 7/7 ledger、密文副本/MCP 投影一致性与 encrypted-only
+  cutover；OAuth/Journal ready 均为 200，正式只读 ChatGPT 连接器完成四工具和 Resource
+  脱敏验收，重复 Cloud 状态调用确认电脑关机不影响读取。
 - 隔离 Cloudflare Worker/D1 使用真实 RS256 `at+jwt` 与 introspection 完成
   `initialize → tools/list → journal_get_entry → resources/read`，读取非空测试正文；删除后正文不可读、
   恢复后重新可读，D1/MCP 不含 `coverImage`、图片字节、路径或附件存在性。

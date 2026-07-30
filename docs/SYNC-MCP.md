@@ -25,6 +25,8 @@
 - 客户端顺序固定为：重试已有 outbox → 拉 changes/imports → 原子保存 → 合并并排队 →
   每批最多 25 条发送。只有 ACK、cursor、materialization、pending import 和 outbox 一起
   落盘后才算完成。
+- production 已完成 7/7 ledger、密文副本与 MCP 投影核对并执行 encrypted-only cutover；
+  回归确认旧表和不完整迁移均为 0。后续设备不再依赖 legacy 明文源表。
 
 ## 电脑与手机直连附件
 
@@ -102,3 +104,8 @@ ChatGPT 拾光日记应用
 token 互不通用。MCP 暴露状态、最近、搜索、按日期完整读取和 Resource；不提供附件，也不
 返回附件存在性。旧 `PoyiJournalMcp`/`PoyiJournalTunnel` 只保留本地兼容和维护，不作为
 PC-off 验收证据。具体部署和真实调用验收见 `MCP-OPERATIONS.md`。
+
+production ChatGPT 已完成四工具与 embedded Resource 脱敏实测，并重复得到
+`journal_cloud_authoritative`、`pcOffReadable=true` 的 Cloud 状态；该证据不经过本机 8780
+或 Tunnel。Journal 经 Cloudflare service binding 调 OAuth introspection 时会重复发送标准
+Basic 凭据到专用转发头，OAuth 对冲突双头 fail-closed，scope/audience/introspection 规则不变。

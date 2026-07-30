@@ -107,6 +107,7 @@ ChatGPT 生产连接器直接访问 Journal 自己的 Cloud OAuth MCP，因此�
 - [`docs/MCP-OPERATIONS.md`](docs/MCP-OPERATIONS.md)：独立 MCP、Windows 服务、Tunnel 与验收手册
 - [`docs/AI-CODING-GUIDE.md`](docs/AI-CODING-GUIDE.md)：AI coding 工作流、日志和验收规则
 - [`docs/BUGS.md`](docs/BUGS.md)：已知问题、修复记录与 Bug 模板
+- [`docs/ITERATION-LOG.md`](docs/ITERATION-LOG.md)：每次开发的操作、需求、Bug 与验证闭环
 - [`docs/CHANGELOG.md`](docs/CHANGELOG.md)：按版本维护的开发变更日志
 - [`docs/UX-VISUAL-DIRECTION.md`](docs/UX-VISUAL-DIRECTION.md)：Ink & Daylight 视觉方向与响应式约束
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)：阶段计划与暂不做事项

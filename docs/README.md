@@ -16,6 +16,7 @@
 | [MCP-OPERATIONS](MCP-OPERATIONS.md) | 独立 MCP 服务、Tunnel、密钥、运维和验收 |
 | [AI-CODING-GUIDE](AI-CODING-GUIDE.md) | AI 开发工作流、日志和验收 |
 | [BUGS](BUGS.md) | 已知问题、修复记录和回归证据 |
+| [ITERATION-LOG](ITERATION-LOG.md) | 每次迭代的操作、需求、Bug 和验证闭环 |
 | [CHANGELOG](CHANGELOG.md) | 面向版本的开发变更日志 |
 | [CONTEXT-MANAGEMENT](CONTEXT-MANAGEMENT.md) | 项目/模块/任务三级上下文 |
 | [COMPONENT-TEMPLATE](COMPONENT-TEMPLATE.md) | 组件文档与验收模板 |
@@ -43,3 +44,4 @@
 4. 真实日记只留在本地运行数据，不进入代码仓库。
 5. UI 重构前先写出状态、层级、响应式和可访问性规则，再实现。
 6. 新需求先分配需求编号；Bug 修复同步更新 `BUGS.md`，用户可感知变更同步更新 `CHANGELOG.md`。
+7. 每次开发都必须新增 `ITER-YYYYMMDD-NN` 台账，明确新增、修改、删除、验证和遗留项。

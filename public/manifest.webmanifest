@@ -9,10 +9,22 @@
   "lang": "zh-CN",
   "icons": [
     {
-      "src": "/icon-journal-sunrise.png",
-      "sizes": "1254x1254",
+      "src": "/icon-journal-sunrise-192.png",
+      "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-journal-sunrise-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-journal-sunrise-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

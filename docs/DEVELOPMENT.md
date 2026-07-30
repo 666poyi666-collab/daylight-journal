@@ -38,14 +38,17 @@ Vite 的 `VITE_*` 变量会进入客户端包，不能用于保存秘密。服�
 ## 日常开发
 
 1. 阅读根目录 `AGENTS.md`、`README.md`、`docs/README.md` 和任务专题文档。
-2. 写明根因、影响范围和验收方式，再做最小改动。
-3. 业务行为、技术协议和视觉决策分别更新对应文档。
-4. 使用虚构测试数据；不得让 E2E 请求命中真实同步服务。
-5. 提交前检查变更、敏感信息、构建与测试结果。
+2. 阅读 `REQUIREMENTS.md`、`BUGS.md` 和 `ITERATION-LOG.md` 最近记录，确认关联需求编号。
+3. 写明根因、影响范围和验收方式，再做最小改动；新需求先登记，发现 Bug 先编号。
+4. 业务行为、技术协议和视觉决策分别更新对应文档。
+5. 使用虚构测试数据；不得让 E2E 请求命中真实同步服务。
+6. 在 `ITERATION-LOG.md` 逐项记录新增、修改、删除、Bug、需求分析、验证和遗留项。
+7. 提交前检查变更、敏感信息、构建、测试和治理校验结果。
 
 ## 验证命令
 
 ```powershell
+npm run check:governance
 npm run lint
 npm run test:unit
 npm run build
@@ -89,6 +92,8 @@ npx cap copy android
 ## 发布检查表
 
 - 需求编号和范围已确认。
+- `ITERATION-LOG.md` 已记录本轮新增、修改、删除、Bug、需求分析、验证和遗留项。
+- `REQUIREMENTS.md` 与 `BUGS.md` 的状态和统计已同步，`npm run check:governance` 通过。
 - `CHANGELOG.md` 已更新；相关 Bug 状态和回归证据已更新。
 - 源码扫描不含真实日记、令牌、Cookie、个人 URL、日志或签名文件。
 - Build、Lint、单元测试及受影响的 E2E/PWA/接口测试通过。
